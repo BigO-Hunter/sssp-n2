@@ -733,6 +733,69 @@ theorem sweep_inv_relax_improve {G : Graph} {s : Fin G.n} {st : State ℝ≥0} {
     · rw [if_neg hse]
       exact SW.dist_s_zero
 
+/-- The fresh `EdgeRelaxed` of the unreached-target write -- the `SweepInv.advance` input. -/
+theorem edgeRelaxed_unreached {G : Graph} {s : Fin G.n} {st : State ℝ≥0} {u : ℕ} {e : Fin G.m}
+    (SW : SweepInv G s u st) (huu : u < G.n) (hsrc : (G.src e : ℕ) = u)
+    (hv0 : st.wa "reach" (G.dst e) = 0) :
+    EdgeRelaxed G ((((st.storeV "dist" (G.dst e) (st.va "dist" u + G.w e)).charge 1)
+      |>.storeW "reach" (G.dst e) 1).charge 1) u e := by
+  have hune : u ≠ (G.dst e : ℕ) := by
+    intro hh
+    rw [← hh] at hv0
+    have h2 := SW.reach_u
+    omega
+  refine ⟨?_, ?_⟩
+  · show ((((st.storeV "dist" (G.dst e) (st.va "dist" u + G.w e)).charge 1)
+      |>.storeW "reach" (G.dst e) 1).charge 1).wa "reach" (G.dst e) ≠ 0
+    simp [State.storeW, State.charge, State.storeV]
+  · show (((((st.storeV "dist" (G.dst e) (st.va "dist" u + G.w e)).charge 1)
+      |>.storeW "reach" (G.dst e) 1).charge 1).va "dist" (G.dst e) : ℝ≥0) ≤
+      ((((st.storeV "dist" (G.dst e) (st.va "dist" u + G.w e)).charge 1)
+        |>.storeW "reach" (G.dst e) 1).charge 1).va "dist" u + G.w e
+    simp [State.storeW, State.charge, State.storeV, hune]
+
+/-- The fresh `EdgeRelaxed` of the strict-improvement write -- the `SweepInv.advance` input. -/
+theorem edgeRelaxed_improve {G : Graph} {s : Fin G.n} {st : State ℝ≥0} {u : ℕ} {e : Fin G.m}
+    (SW : SweepInv G s u st) (huu : u < G.n) (hsrc : (G.src e : ℕ) = u)
+    (hv1 : st.wa "reach" (G.dst e) = 1) :
+    EdgeRelaxed G ((st.storeV "dist" (G.dst e) (st.va "dist" u + G.w e)).charge 1) u e := by
+  have hune : u ≠ (G.dst e : ℕ) := by
+    intro hh
+    rw [← hh] at hv1
+    have h2 := SW.reach_u
+    omega
+  refine ⟨?_, ?_⟩
+  · show st.wa "reach" (G.dst e) ≠ 0
+    rw [hv1]
+    decide
+  · show (((st.storeV "dist" (G.dst e) (st.va "dist" u + G.w e)).charge 1).va "dist" (G.dst e)
+      : ℝ≥0) ≤ ((st.storeV "dist" (G.dst e) (st.va "dist" u + G.w e)).charge 1).va "dist" u + G.w e
+    simp [State.storeV, State.charge, hune]
+
+/-- A settled target's skip obligation: both labels are exact (`settled_exact`) and the
+triangle inequality for the edge (`dist_edge`) supplies the bound. -/
+theorem relaxed_of_settled {G : Graph} {s : Fin G.n} {st : State ℝ≥0} {u : ℕ} {e : Fin G.m}
+    (SW : SweepInv G s u st) (huu : u < G.n) (hsrc : (G.src e : ℕ) = u)
+    (hv2 : st.wa "reach" (G.dst e) = 2) : EdgeRelaxed G st u e := by
+  refine ⟨by rw [hv2]; decide, ?_⟩
+  have hu2 : st.wa "reach" u = 2 := SW.reach_u
+  have hde : ((st.va "dist" (G.dst e) : ℝ≥0) : ℝ≥0∞) = G.dist s (G.dst e) :=
+    SW.settled_exact (G.dst e) hv2
+  have hdu : ((st.va "dist" u : ℝ≥0) : ℝ≥0∞) = G.dist s (⟨u, huu⟩ : Fin G.n) :=
+    SW.settled_exact (⟨u, huu⟩ : Fin G.n)
+      (show st.wa "reach" (⟨u, huu⟩ : Fin G.n) = 2 from hu2)
+  have hsrc' : (G.src e) = (⟨u, huu⟩ : Fin G.n) := Fin.ext hsrc
+  have htri : G.dist s (G.dst e) ≤ G.dist s (⟨u, huu⟩ : Fin G.n) + G.w e := by
+    rw [← hsrc']
+    exact dist_edge s e
+  have hcoe : ((st.va "dist" u + G.w e : ℝ≥0) : ℝ≥0∞)
+      = ((st.va "dist" u : ℝ≥0) : ℝ≥0∞) + ((G.w e : ℝ≥0) : ℝ≥0∞) := ENNReal.coe_add _ _
+  have hfin : ((st.va "dist" (G.dst e) : ℝ≥0) : ℝ≥0∞)
+      ≤ ((st.va "dist" u + G.w e : ℝ≥0) : ℝ≥0∞) := by
+    rw [hcoe, hde, hdu]
+    exact htri
+  exact ENNReal.coe_le_coe.mp hfin
+
 set_option maxHeartbeats 800000 in
 /-- Sweep variant of one relax step (`relaxBody`) over edge `idx[st.w "j"]`: preserves
 `SweepInv` and advances the cursor.  DESIGN: identical spine to `relaxBody_runs` below
@@ -750,6 +813,93 @@ theorem sweep_relaxBody_runs {G : Graph} {s : Fin G.n} {st : State ℝ≥0} {u :
       settledEdges G st' = settledEdges G st ∧ settleCard G st' = settleCard G st ∧
       (st'.cost : ℝ) ≤ st.cost + 8 ∧ st'.wa "reach" u = 2 ∧
       ∀ v : ℕ, st'.wa "head" v = st.wa "head" v) := by
+  obtain ⟨hjm, hidxm, hsrc⟩ := S.csr.csr_seg ⟨u, huu⟩ (st.w "j") hj hjend
+  set eFin : Fin G.m := ⟨st.wa "idx" (st.w "j"), hidxm⟩ with heFin
+  have hsrc_e : G.src eFin = (⟨u, huu⟩ : Fin G.n) := hsrc hidxm
+  have hsrc_n : (G.src eFin : ℕ) = u := congrArg Fin.val hsrc_e
+  have hwe : st.va "w" (eFin : ℕ) = G.w eFin := S.frame.hw (eFin : ℕ) hidxm
+  have hdst_e : st.wa "dst" (eFin : ℕ) = (G.dst eFin : ℕ) := S.frame.hdst (eFin : ℕ) hidxm
+  have hcap0 : G.n + G.m + 2 ≤ st.cap := S.frame.hcap
+  -- common tail: `wset "j" (j+1)` -- SweepInv gains position j via the branch's EdgeRelaxed
+  have finish : ∀ t : State ℝ≥0, SweepInv G s u t → t.w "j" = st.w "j" → t.w "u" = st.w "u" →
+      t.w "jend" = st.w "jend" → t.w "k" = st.w "k" → t.w "best" = st.w "best" →
+      t.w "i" = st.w "i" → settledEdges G t = settledEdges G st →
+      settleCard G t = settleCard G st → t.cost ≤ st.cost + 7 →
+      t.wa "reach" u = 2 → (∀ v : ℕ, t.wa "head" v = st.wa "head" v) →
+      t.wa "idx" (t.w "j") = st.wa "idx" (st.w "j") →
+      EdgeRelaxed G t u eFin →
+      Runs realOps (wset "j" (.add (.var "j") (.lit 1))) t
+        (fun st' => SweepInv G s u st' ∧
+          st'.w "j" = st.w "j" + 1 ∧ st'.w "u" = st.w "u" ∧ st'.w "jend" = st.w "jend" ∧
+          st'.w "k" = st.w "k" ∧ st'.w "best" = st.w "best" ∧ st'.w "i" = st.w "i" ∧
+          settledEdges G st' = settledEdges G st ∧ settleCard G st' = settleCard G st ∧
+          (st'.cost : ℝ) ≤ st.cost + 8 ∧ st'.wa "reach" u = 2 ∧
+      ∀ v : ℕ, st'.wa "head" v = st.wa "head" v) := by
+    intro t It h3j h3u h3jend h3k h3best h3i h3se h3sc h3cost h3reach h3head hidxeq hedge
+    have htcap : G.n + G.m + 2 ≤ t.cap := It.frame.hcap
+    have hedgeAll : ∀ hidx : t.wa "idx" (t.w "j") < G.m,
+        EdgeRelaxed G t u ⟨t.wa "idx" (t.w "j"), hidx⟩ := by
+      intro hidx
+      have : (⟨t.wa "idx" (t.w "j"), hidx⟩ : Fin G.m) = eFin := Fin.ext hidxeq
+      rw [this]
+      exact hedge
+    refine runs_wset (a := t.w "j" + 1)
+      (evalW_add_of (evalW_var t "j") (evalW_lit_of (by have := htcap; omega))
+        (by have := htcap; omega)) ?_
+    refine ⟨(It.advance huu (by rw [h3j, h3head (u + 1)]; exact hjend) hedgeAll).charge 1,
+      ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+    · simp [State.setW, State.charge, h3j]
+    · simp [State.setW, State.charge, h3u]
+    · simp [State.setW, State.charge, h3jend]
+    · simp [State.setW, State.charge, h3k]
+    · simp [State.setW, State.charge, h3best]
+    · simp [State.setW, State.charge, h3i]
+    · show settledEdges G t = settledEdges G st; exact h3se
+    · show settleCard G t = settleCard G st; exact h3sc
+    · simp [State.setW, State.charge]
+      exact_mod_cast (by omega : t.cost + 1 ≤ st.cost + 8)
+    · exact h3reach
+    · intro v; exact h3head v
+  -- e := idx[j]
+  refine runs_seq (runs_wset (a := (eFin : ℕ))
+    (by rw [evalW_load_of (evalW_var st "j") (by rw [S.csr.hidxL]; exact hjm)]) ?_)
+  set st1 : State ℝ≥0 := (st.setW "e" (eFin : ℕ)).charge 1 with hst1
+  have h1e : st1.w "e" = (eFin : ℕ) := by simp [st1, State.setW, State.charge]
+  have S1 : SweepInv G s u st1 :=
+    (S.setW "e" (eFin : ℕ) (by decide) (by decide) (by decide)).charge 1
+  -- v := dst[e]
+  have h1eval : evalW st1 (.load "dst" (.var "e")) = some ((G.dst eFin : ℕ)) := by
+    rw [evalW_load_of (j := (eFin : ℕ)) (by rw [evalW_var, h1e])
+      (by rw [S1.frame.hdstL]; exact hidxm)]
+    exact congrArg some hdst_e
+  refine runs_seq (runs_wset (a := (G.dst eFin : ℕ)) h1eval ?_)
+  set st2 : State ℝ≥0 := (st1.setW "v" (G.dst eFin : ℕ)).charge 1 with hst2
+  have h2u : st2.w "u" = u := by simp [st2, st1, State.setW, State.charge, hwu]
+  have h2v : st2.w "v" = (G.dst eFin : ℕ) := by simp [st2, State.setW, State.charge]
+  have h2e : st2.w "e" = (eFin : ℕ) := by simp [st2, st1, State.setW, State.charge]
+  have h2cost : st2.cost = st.cost + 2 := by simp [st2, st1, State.setW, State.charge]
+  have S2 : SweepInv G s u st2 :=
+    ((S.setW "e" (eFin : ℕ) (by decide) (by decide) (by decide)).charge 1
+      |>.setW "v" (G.dst eFin : ℕ) (by decide) (by decide) (by decide)).charge 1
+  have h2cap : G.n + G.m + 2 ≤ st2.cap := S2.frame.hcap
+  have h2distL : st2.vlen "dist" = G.n := S2.frame.hdistL
+  have h2reachL : st2.wlen "reach" = G.n := S2.frame.hreachL
+  have h2wL : st2.vlen "w" = G.m := S2.frame.hwL
+  have hreachv : evalW st2 (.load "reach" (.var "v")) = some (st.wa "reach" (G.dst eFin)) :=
+    evalW_load_of (by rw [evalW_var, h2v]) (by rw [h2reachL]; exact (G.dst eFin).isLt)
+  have htest2 : evalW st2 (.eq (.load "reach" (.var "v")) (.lit 2)) =
+      some (if st.wa "reach" (G.dst eFin) = 2 then 1 else 0) :=
+    evalW_eq_of hreachv (evalW_lit_of (by have := h2cap; omega)) (by have := h2cap; omega)
+  -- relaxInner, then the common tail
+  refine runs_seq ?_
+  by_cases h2v2 : st.wa "reach" (G.dst eFin) = 2
+  · -- settled target: skip
+    refine runs_ite_true (x := 1) (by rw [htest2, h2v2]; rfl) one_ne_zero (runs_skip ?_)
+    refine finish _ ((S2.charge 1).charge 1) rfl rfl rfl rfl rfl rfl rfl rfl ?_
+      S.reach_u (fun v => rfl) rfl ?_
+    · simp [State.charge, h2cost]
+    · exact relaxed_of_settled ((S2.charge 1).charge 1) huu hsrc_n
+        (by show ((st2.charge 1).charge 1).wa "reach" (G.dst eFin) = 2; exact h2v2)
   sorry
 
 /-- Sweep variant of one relax loop over `u`'s CSR segment: `K = head[u+1] - head[u]`
