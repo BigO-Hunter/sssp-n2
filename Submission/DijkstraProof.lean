@@ -1588,6 +1588,55 @@ theorem scanPrefix_full {G : Graph} {st : State ℝ≥0} {b : ℕ}
   · exact Or.inl ⟨hb, fun v hv => hall v v.isLt hv⟩
   · exact Or.inr ⟨hbl, hbr, fun v hv => hle v v.isLt hv⟩
 
+/-- Prefix extension without a new member: if vertex `k` is not reach-1 the scanned
+prefix grows but the best is unchanged. -/
+theorem scanPrefix_extend {G : Graph} {t : State ℝ≥0} {b k : ℕ}
+    (hsp : ScanPrefix G t b k) (hr : t.wa "reach" k ≠ 1) :
+    ScanPrefix G t b (k + 1) := by
+  rcases hsp with ⟨hb, hnone⟩ | ⟨hbl, hbk, hbr, hmin⟩
+  · exact Or.inl ⟨hb, fun v hv hreach => by
+      have hvk : (v : ℕ) < k ∨ (v : ℕ) = k := by omega
+      rcases hvk with hvk | hvk
+      · exact hnone v hvk hreach
+      · rw [hvk] at hreach
+        exact absurd hreach hr⟩
+  · exact Or.inr ⟨hbl, by omega, hbr, fun v hv hreach => by
+      have hvk : (v : ℕ) < k ∨ (v : ℕ) = k := by omega
+      rcases hvk with hvk | hvk
+      · exact hmin v hvk hreach
+      · rw [hvk] at hreach
+        exact absurd hreach hr⟩
+
+/-- Argmin maintenance: extending the prefix by a reach-1 vertex `k` promotes `k` to
+best iff it is the first reach-1 vertex or it beats the old best. -/
+theorem scanPrefix_cons {G : Graph} {t : State ℝ≥0} {b k : ℕ}
+    (hsp : ScanPrefix G t b k) (hr : t.wa "reach" k = 1) (hk : k < G.n) :
+    ScanPrefix G t (if b = G.n then k
+      else if (t.va "dist" k : ℝ≥0) ≤ t.va "dist" b then k else b) (k + 1) := by
+  rcases hsp with ⟨hb, hnone⟩ | ⟨hbl, hbk, hbr, hmin⟩
+  · rw [if_pos hb]
+    refine Or.inr ⟨hk, by omega, hr, fun v hv hreach => ?_⟩
+    have hvk : (v : ℕ) < k ∨ (v : ℕ) = k := by omega
+    rcases hvk with hvk | hvk
+    · exact absurd hreach (hnone v hvk)
+    · rw [hvk]
+  · have hne : ¬ (b = G.n) := by omega
+    rw [if_neg hne]
+    by_cases hle : (t.va "dist" k : ℝ≥0) ≤ t.va "dist" b
+    · rw [if_pos hle]
+      refine Or.inr ⟨hk, by omega, hr, fun v hv hreach => ?_⟩
+      have hvk : (v : ℕ) < k ∨ (v : ℕ) = k := by omega
+      rcases hvk with hvk | hvk
+      · exact le_trans hle (hmin v hvk hreach)
+      · rw [hvk]
+    · rw [if_neg hle]
+      refine Or.inr ⟨hbl, by omega, hbr, fun v hv hreach => ?_⟩
+      have hvk : (v : ℕ) < k ∨ (v : ℕ) = k := by omega
+      rcases hvk with hvk | hvk
+      · exact hmin v hvk hreach
+      · rw [hvk]
+        exact le_of_lt (lt_of_not_ge hle)
+
 /-- The min-scan: from `best = n`, `i = 0`, `minLoop` runs `n` counted steps; at exit `best`
 is the argmin over `reach = 1` (or the `n` sentinel) — `ScanPost`.  Cost `≤ 9·n + 1`.
 `minBody` writes only `i`/`best`/`c`, so `Inv` survives by `Inv.setW`.  FILL (per the
@@ -1603,7 +1652,227 @@ theorem minLoop_runs {G : Graph} {s : Fin G.n} {st : State ℝ≥0}
       st'.w "k" = st.w "k" ∧ settledEdges G st' = settledEdges G st ∧
       settleCard G st' = settleCard G st ∧ (st'.cost : ℝ) ≤ st.cost + 9 * G.n + 1 ∧
       ∀ v : ℕ, st'.wa "head" v = st.wa "head" v) := by
-  sorry
+  have hnpos : 0 < G.n := by have := s.isLt; omega
+  set J : ℕ → State ℝ≥0 → Prop := fun k t => Inv G s t ∧ t.w "i" = k ∧
+      ScanPrefix G t (t.w "best") k ∧ t.w "u" = st.w "u" ∧ t.w "j" = st.w "j" ∧
+      t.w "jend" = st.w "jend" ∧ t.w "k" = st.w "k" ∧
+      settledEdges G t = settledEdges G st ∧ settleCard G t = settleCard G st ∧
+      t.cost ≤ st.cost + 9 * k ∧ (∀ v : ℕ, t.wa "head" v = st.wa "head" v) with hJ
+  have step : ∀ k < G.n, ∀ t, J k t →
+      ∃ x, evalW t (.lt (.var "i") (.var "n")) = some x ∧ x ≠ 0 ∧
+        Runs realOps minBody (t.charge 1) (J (k + 1)) := by
+    intro k hk t Jt
+    obtain ⟨It, hit, hsp, hut, hjt, hjet, hkt, hset, hsct, hct, hhead⟩ := Jt
+    have hcap : G.n + G.m + 2 ≤ t.cap := It.frame.hcap
+    have hn : t.w "n" = G.n := It.frame.hn
+    refine ⟨1, ?_, one_ne_zero, ?_⟩
+    · rw [evalW_lt_of (evalW_var t "i") (evalW_var t "n")
+        (by have := hcap; omega), hit, hn, if_pos hk]
+    · -- common tail: wset "i" (i+1)
+      have tail : ∀ t' : State ℝ≥0, Inv G s t' → t'.w "i" = k →
+          ScanPrefix G t' (t'.w "best") (k + 1) →
+          t'.w "u" = st.w "u" → t'.w "j" = st.w "j" → t'.w "jend" = st.w "jend" →
+          t'.w "k" = st.w "k" → settledEdges G t' = settledEdges G st →
+          settleCard G t' = settleCard G st → t'.cost ≤ st.cost + 9 * k + 8 →
+          (∀ v : ℕ, t'.wa "head" v = st.wa "head" v) →
+          Runs realOps (wset "i" (.add (.var "i") (.lit 1))) t' (J (k + 1)) := by
+        intro t' It' hit' hsp' hut' hjt' hjet' hkt' hset' hsct' hct' hhead'
+        have hcap' : G.n + G.m + 2 ≤ t'.cap := It'.frame.hcap
+        refine runs_wset (a := k + 1)
+          (evalW_add_of (by rw [evalW_var, hit']) (evalW_lit_of (by have := hcap'; omega))
+            (by have := hcap'; omega)) ?_
+        refine ⟨(It'.setW "i" (k + 1) (by decide) (by decide)).charge 1,
+          rfl, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+        · show ScanPrefix G ((t'.setW "i" (k + 1)).charge 1)
+            (((t'.setW "i" (k + 1)).charge 1).w "best") (k + 1)
+          exact hsp'
+        · simp [State.setW, State.charge, hut']
+        · simp [State.setW, State.charge, hjt']
+        · simp [State.setW, State.charge, hjet']
+        · simp [State.setW, State.charge, hkt']
+        · show settledEdges G ((t'.setW "i" (k + 1)).charge 1) = settledEdges G st
+          exact hset'
+        · show settleCard G ((t'.setW "i" (k + 1)).charge 1) = settleCard G st
+          exact hsct'
+        · simp [State.setW, State.charge]
+          exact_mod_cast (by omega : t'.cost + 1 ≤ st.cost + 9 * k + 9)
+        · intro v
+          show ((t'.setW "i" (k + 1)).charge 1).wa "head" v = st.wa "head" v
+          exact hhead' v
+      refine runs_seq ?_
+      -- minInner at t.charge 1
+      by_cases hr1 : t.wa "reach" k = 1
+      · -- reach k = 1: minInner's first test fires
+        have htest1 : evalW (t.charge 1) (.eq (.load "reach" (.var "i")) (.lit 1))
+            = some 1 := by
+          rw [evalW_charge, evalW_eq_of (evalW_load_of (evalW_var t "i")
+            (by rw [It.frame.hreachL, hit]; exact hk)) (evalW_lit_of (by have := hcap; omega))
+            (by have := hcap; omega), hit]
+          rw [hr1]
+          rfl
+        refine runs_ite_true (x := 1) htest1 one_ne_zero ?_
+        -- inner test: best = n?
+        by_cases hbn : t.w "best" = G.n
+        · -- sentinel: best := k
+          have htest2 : evalW ((t.charge 1).charge 1) (.eq (.var "best") (.var "n"))
+              = some 1 := by
+            rw [evalW_charge, evalW_charge, evalW_eq_of (evalW_var t "best")
+              (evalW_var t "n") (by have := hcap; omega), hbn, hn]
+            simp
+          refine runs_ite_true (x := 1) htest2 one_ne_zero ?_
+          refine runs_wset (a := k) (by simp [evalW_var, State.charge, hit]) ?_
+          refine tail _ ?_ (by simp [State.setW, State.charge, hit]) ?_ hut hjt hjet hkt
+            hset hsct ?_ (fun v => hhead v)
+          · exact (((It.charge 1).charge 1).charge 1 |>.setW "best" k (by decide) (by decide))
+              |>.charge 1
+          · show ScanPrefix G (((((t.charge 1).charge 1).charge 1 |>.setW "best" k).charge 1))
+              ((((((t.charge 1).charge 1).charge 1 |>.setW "best" k).charge 1)).w "best") (k + 1)
+            simp only [State.setW, State.charge]
+            have hsp' : ScanPrefix G t (if t.w "best" = G.n then k
+                else if (t.va "dist" k : ℝ≥0) ≤ t.va "dist" (t.w "best") then k
+                else t.w "best") (k + 1) :=
+              scanPrefix_cons hsp hr1 hk
+            rw [if_pos hbn] at hsp'
+            exact hsp'
+          · simp [State.charge, State.setW]
+            omega
+        · -- compare: c := (dist k ≤ dist best)
+          have htest2 : evalW ((t.charge 1).charge 1) (.eq (.var "best") (.var "n"))
+              = some 0 := by
+            rw [evalW_charge, evalW_charge, evalW_eq_of (evalW_var t "best")
+              (evalW_var t "n") (by have := hcap; omega), hn]
+            rw [if_neg (by omega)]
+          refine runs_ite_false htest2 ?_
+          -- vle
+          set b0 : ℕ := t.w "best"
+          have hb0 : b0 = t.w "best" := rfl
+          have hleT : evalV realOps (((t.charge 1).charge 1).charge 1)
+              (.load "dist" (.var "i")) = some (t.va "dist" k) := by
+            rw [evalV_charge, evalV_charge, evalV_charge,
+              evalV_load_of (evalW_var t "i") (by rw [It.frame.hdistL, hit]; exact hk), hit]
+          have hblt : b0 < G.n := by
+            rcases hsp with ⟨hb, -⟩ | ⟨hbl, -⟩
+            · omega
+            · omega
+          have hleB : evalV realOps (((t.charge 1).charge 1).charge 1)
+              (.load "dist" (.var "best")) = some (t.va "dist" b0) := by
+            rw [evalV_charge, evalV_charge, evalV_charge,
+              evalV_load_of (evalW_var t "best")
+                (by rw [It.frame.hdistL]; exact hblt)]
+          have h1cap : 1 < (((t.charge 1).charge 1).charge 1).cap := by
+            have h2 : 1 < t.cap := by omega
+            exact h2
+          refine runs_seq ?_
+          refine runs_vle hleT hleB h1cap ?_
+          set bit : ℕ := if realOps.le (t.va "dist" k) (t.va "dist" b0) then 1 else 0 with hbit
+          by_cases hle : (t.va "dist" k : ℝ≥0) ≤ t.va "dist" b0
+          · -- c = 1: best := k
+            have hbit1 : bit = 1 := by simp [bit, realOps, hle]
+            have htest3 : evalW (((((t.charge 1).charge 1).charge 1).setW "c" bit).charge 1)
+                (.var "c") = some 1 := by
+              rw [evalW_var]
+              simp [State.setW, State.charge, hbit1]
+            refine runs_ite_true (x := 1) htest3 one_ne_zero ?_
+            refine runs_wset (a := k) (by simp [evalW_var, State.charge, State.setW, hit]) ?_
+            refine tail _ ?_ hit ?_ hut hjt hjet hkt hset hsct ?_ (fun v => hhead v)
+            · exact ((((It.charge 1).charge 1).charge 1 |>.setW "c" bit (by decide) (by decide))
+                |>.charge 1 |>.charge 1 |>.setW "best" k (by decide) (by decide)) |>.charge 1
+            · show ScanPrefix G ((((((t.charge 1).charge 1).charge 1 |>.setW "c" bit).charge 1
+                |>.setW "best" k).charge 1))
+                (((((((t.charge 1).charge 1).charge 1 |>.setW "c" bit).charge 1
+                  |>.setW "best" k).charge 1)).w "best") (k + 1)
+              simp only [State.setW, State.charge]
+              have hsp' : ScanPrefix G t (if t.w "best" = G.n then k
+                  else if (t.va "dist" k : ℝ≥0) ≤ t.va "dist" (t.w "best") then k
+                  else t.w "best") (k + 1) :=
+                scanPrefix_cons hsp hr1 hk
+              rw [if_neg hbn] at hsp'
+              rw [if_pos hle] at hsp'
+              exact hsp'
+            · simp [State.charge, State.setW]
+              omega
+          · -- c = 0: skip
+            have hbit0 : bit = 0 := by simp [bit, realOps, hle]
+            have htest3 : evalW (((((t.charge 1).charge 1).charge 1).setW "c" bit).charge 1)
+                (.var "c") = some 0 := by
+              rw [evalW_var]
+              simp [State.setW, State.charge, hbit0]
+            refine runs_ite_false htest3 ?_
+            refine runs_skip ?_
+            refine tail _ ?_ hit ?_ hut hjt hjet hkt hset hsct ?_ (fun v => hhead v)
+            · exact ((((It.charge 1).charge 1).charge 1 |>.setW "c" bit (by decide) (by decide))
+                |>.charge 1 |>.charge 1 |>.charge 1)
+            · show ScanPrefix G ((((((t.charge 1).charge 1).charge 1 |>.setW "c" bit).charge 1
+                |>.charge 1)))
+                (((((((t.charge 1).charge 1).charge 1 |>.setW "c" bit).charge 1
+                  |>.charge 1))).w "best") (k + 1)
+              simp only [State.setW, State.charge]
+              have hsp' : ScanPrefix G t (if t.w "best" = G.n then k
+                  else if (t.va "dist" k : ℝ≥0) ≤ t.va "dist" (t.w "best") then k
+                  else t.w "best") (k + 1) :=
+                scanPrefix_cons hsp hr1 hk
+              rw [if_neg hbn] at hsp'
+              rw [if_neg hle] at hsp'
+              exact hsp'
+            · simp [State.charge, State.setW]
+              omega
+      · -- reach k ≠ 1: skip
+        have htest1 : evalW (t.charge 1) (.eq (.load "reach" (.var "i")) (.lit 1))
+            = some 0 := by
+          rw [evalW_charge, evalW_eq_of (evalW_load_of (evalW_var t "i")
+            (by rw [It.frame.hreachL, hit]; exact hk)) (evalW_lit_of (by have := hcap; omega))
+            (by have := hcap; omega), hit]
+          rw [if_neg hr1]
+        refine runs_ite_false htest1 ?_
+        refine runs_skip ?_
+        refine tail _ ?_ hit ?_ hut hjt hjet hkt hset hsct ?_ (fun v => hhead v)
+        · exact (((It.charge 1).charge 1).charge 1)
+        · show ScanPrefix G ((t.charge 1).charge 1)
+            (((t.charge 1).charge 1).w "best") (k + 1)
+          have hsp' : ScanPrefix G t (t.w "best") (k + 1) :=
+            scanPrefix_extend hsp hr1
+          exact hsp'
+        · simp [State.charge]
+          omega
+  have exit : ∀ t, J G.n t → evalW t (.lt (.var "i") (.var "n")) = some 0 ∧
+      (fun st' => Inv G s st' ∧ ScanPost G st' (st'.w "best") ∧
+        st'.w "u" = st.w "u" ∧ st'.w "j" = st.w "j" ∧ st'.w "jend" = st.w "jend" ∧
+        st'.w "k" = st.w "k" ∧ settledEdges G st' = settledEdges G st ∧
+        settleCard G st' = settleCard G st ∧ (st'.cost : ℝ) ≤ st.cost + 9 * G.n + 1 ∧
+        ∀ v : ℕ, st'.wa "head" v = st.wa "head" v) (t.charge 1) := by
+    intro t Jt
+    obtain ⟨It, hit, hsp, hut, hjt, hjet, hkt, hset, hsct, hct, hhead⟩ := Jt
+    have hcap : G.n + G.m + 2 ≤ t.cap := It.frame.hcap
+    have hn : t.w "n" = G.n := It.frame.hn
+    constructor
+    · rw [evalW_lt_of (evalW_var t "i") (evalW_var t "n")
+        (by have := hcap; omega), hit, hn]
+      rw [if_neg (by omega)]
+    · refine ⟨It.charge 1, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+      · show ScanPost G (t.charge 1) ((t.charge 1).w "best")
+        exact scanPrefix_full hsp
+      · simp [State.charge, hut]
+      · simp [State.charge, hjt]
+      · simp [State.charge, hjet]
+      · simp [State.charge, hkt]
+      · show settledEdges G (t.charge 1) = settledEdges G st
+        exact hset
+      · show settleCard G (t.charge 1) = settleCard G st
+        exact hsct
+      · simp [State.charge]
+        exact_mod_cast hct
+      · intro v
+        show (t.charge 1).wa "head" v = st.wa "head" v
+        exact hhead v
+  refine runs_while J G.n _ step exit st ?_
+  refine ⟨I, hi0, ?_, rfl, rfl, rfl, rfl, rfl, rfl, ?_, fun v => rfl⟩
+  · rw [hbest]
+    left
+    constructor
+    · rfl
+    · intro v hv _
+      omega
+  · omega
 
 theorem inv_of_main_step {G : Graph} {s : Fin G.n} {st st' : State ℝ≥0}
     (I : Inv G s st) (hk : st.w "k" < G.n)
