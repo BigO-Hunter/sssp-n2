@@ -900,7 +900,121 @@ theorem sweep_relaxBody_runs {G : Graph} {s : Fin G.n} {st : State ℝ≥0} {u :
     · simp [State.charge, h2cost]
     · exact relaxed_of_settled ((S2.charge 1).charge 1) huu hsrc_n
         (by show ((st2.charge 1).charge 1).wa "reach" (G.dst eFin) = 2; exact h2v2)
-  sorry
+  · refine runs_ite_false (by rw [htest2, if_neg h2v2]) ?_
+    have h21cap : G.n + G.m + 2 ≤ (st2.charge 1).cap := h2cap
+    have hreachv1 : evalW (st2.charge 1) (.load "reach" (.var "v"))
+        = some (st.wa "reach" (G.dst eFin)) := by rw [evalW_charge]; exact hreachv
+    have htestc2 : evalW (st2.charge 1) (.eq (.load "reach" (.var "v")) (.lit 0)) =
+        some (if st.wa "reach" (G.dst eFin) = 0 then 1 else 0) :=
+      evalW_eq_of hreachv1 (evalW_lit_of (by have := h21cap; omega)) (by have := h21cap; omega)
+    by_cases h0v : st.wa "reach" (G.dst eFin) = 0
+    · -- unreached target: dist[v] := dist[u] + w[e], reach[v] := 1
+      refine runs_ite_true (x := 1) (by rw [htestc2, h0v]; rfl) one_ne_zero ?_
+      set S4 : State ℝ≥0 := (st2.charge 1).charge 1 with hS4
+      have h4distL : S4.vlen "dist" = G.n := S.frame.hdistL
+      have h4reachL : S4.wlen "reach" = G.n := S.frame.hreachL
+      have h4wL : S4.vlen "w" = G.m := S.frame.hwL
+      have h4cap : G.n + G.m + 2 ≤ S4.cap := S.frame.hcap
+      have h4u : S4.w "u" = u := by simp [S4, State.charge, h2u]
+      have h4e : S4.w "e" = (eFin : ℕ) := by simp [S4, State.charge, h2e]
+      have hev4 : evalV realOps S4 relaxVal = some (st.va "dist" u + G.w eFin) := by
+        rw [eval_relaxVal' h4u h4e (by rw [h4distL]; exact huu) (by rw [h4wL]; exact hidxm)]
+        exact congrArg some (congrArg₂ (· + ·) rfl hwe)
+      refine runs_seq (runs_vstore (j := (G.dst eFin : ℕ))
+        (by rw [evalW_var] <;> exact congrArg some h2v) hev4
+        (by rw [h4distL]; exact (G.dst eFin).isLt) ?_)
+      set S5 : State ℝ≥0 := ((S4.storeV "dist" (G.dst eFin) (st.va "dist" u + G.w eFin)).charge 1)
+        with hS5
+      have h5reachL : S5.wlen "reach" = G.n := S.frame.hreachL
+      have h5cap : G.n + G.m + 2 ≤ S5.cap := S.frame.hcap
+      refine runs_wstore (j := (G.dst eFin : ℕ)) (a := 1)
+        (by rw [evalW_var] <;> exact congrArg some h2v)
+        (evalW_lit_of (by have := h5cap; omega))
+        (by rw [h5reachL]; exact (G.dst eFin).isLt) ?_
+      have hvu : (u : ℕ) ≠ (G.dst eFin : ℕ) := by
+        intro h
+        rw [← h] at h0v
+        have h2 := S.reach_u
+        omega
+      have hreachu : S5.wa "reach" u = 2 := S.reach_u
+      refine finish _ (sweep_inv_relax_unreached (S2.charge 1 |>.charge 1) hsrc_n h0v)
+        rfl rfl rfl rfl rfl rfl ?_ ?_ ?_
+        (by simp [State.setW, State.charge, State.storeW, hvu, hreachu]) (fun v => rfl) rfl ?_
+      · show settledEdges G (S5.storeW "reach" (G.dst eFin) 1) = settledEdges G st
+        rw [settledEdges_storeW1 (st := S5) (v := G.dst eFin) (show S5.wa "reach" (G.dst eFin) = 0 from h0v)]
+        rfl
+      · show settleCard G (S5.storeW "reach" (G.dst eFin) 1) = settleCard G st
+        rw [settleCard_storeW1 (st := S5) (v := G.dst eFin) (show S5.wa "reach" (G.dst eFin) = 0 from h0v)]
+        rfl
+      · simp only [hS5, hS4, State.charge, State.storeV, State.storeW, State.setW, h2cost]
+        omega
+      · exact edgeRelaxed_unreached (S2.charge 1 |>.charge 1) huu hsrc_n h0v
+    · -- reached-unsettled target: compare, improve only on strict gain
+      have h1v : st.wa "reach" (G.dst eFin) = 1 := by
+        have hle2 := S.reach_val (G.dst eFin)
+        omega
+      refine runs_ite_false (by rw [htestc2, if_neg h0v]) ?_
+      set S4 : State ℝ≥0 := (st2.charge 1).charge 1 with hS4
+      have h4distL : S4.vlen "dist" = G.n := S.frame.hdistL
+      have h4wL : S4.vlen "w" = G.m := S.frame.hwL
+      have h4cap : G.n + G.m + 2 ≤ S4.cap := S.frame.hcap
+      have h4u : S4.w "u" = u := by simp [S4, State.charge, h2u]
+      have h4e : S4.w "e" = (eFin : ℕ) := by simp [S4, State.charge, h2e]
+      have hdv : evalV realOps S4 (.load "dist" (.var "v"))
+          = some (st.va "dist" (G.dst eFin)) := by
+        rw [evalV_load_of (by rw [evalW_var] <;> exact congrArg some h2v)
+          (by rw [h4distL]; exact (G.dst eFin).isLt)]
+        rfl
+      have hev4 : evalV realOps S4 relaxVal = some (st.va "dist" u + G.w eFin) := by
+        rw [eval_relaxVal' h4u h4e (by rw [h4distL]; exact huu) (by rw [h4wL]; exact hidxm)]
+        exact congrArg some (congrArg₂ (· + ·) rfl hwe)
+      refine runs_seq (runs_vle hdv hev4 (by have := h4cap; omega) ?_)
+      set bit : ℕ := if realOps.le (st.va "dist" (G.dst eFin)) (st.va "dist" u + G.w eFin)
+        then 1 else 0 with hbit
+      set S5 : State ℝ≥0 := ((S4.setW "b" bit).charge 1) with hS5
+      have hS5b : S5.w "b" = bit := by simp [S5, State.setW, State.charge]
+      by_cases hle : st.va "dist" (G.dst eFin) ≤ st.va "dist" u + G.w eFin
+      · have hbit1 : bit = 1 := by simp [bit, realOps, hle]
+        refine runs_ite_true (x := 1) (by rw [evalW_var, hS5b, hbit1]) one_ne_zero (runs_skip ?_)
+        have hedge : EdgeRelaxed G ((S5.charge 1).charge 1) u eFin := by
+          refine ⟨?_, ?_⟩
+          · show st.wa "reach" (G.dst eFin) ≠ 0
+            rw [h1v]
+            exact one_ne_zero
+          · show (st.va "dist" (G.dst eFin) : ℝ≥0) ≤ st.va "dist" u + G.w eFin
+            exact hle
+        refine finish _
+          (((S2.charge 1).charge 1 |>.setW "b" bit (by decide) (by decide) (by decide))
+            |>.charge 1 |>.charge 1 |>.charge 1)
+          rfl rfl rfl rfl rfl rfl rfl rfl ?_ S.reach_u (fun v => rfl) rfl hedge
+        simp only [hS5, hS4, State.charge, State.setW, h2cost]
+        omega
+      · have hbit0 : bit = 0 := by simp [bit, realOps, hle]
+        refine runs_ite_false (by rw [evalW_var, hS5b, hbit0]) ?_
+        have h5distL : S5.vlen "dist" = G.n := S.frame.hdistL
+        have h5wL : S5.vlen "w" = G.m := S.frame.hwL
+        have h51distL : (S5.charge 1).vlen "dist" = G.n := S.frame.hdistL
+        have h5u : S5.w "u" = u := by simp [S5, S4, State.setW, State.charge, h2u]
+        have h5e : S5.w "e" = (eFin : ℕ) := by simp [S5, S4, State.setW, State.charge, h2e]
+        have hev5 : evalV realOps (S5.charge 1) relaxVal
+            = some (st.va "dist" u + G.w eFin) := by
+          rw [evalV_charge]
+          rw [eval_relaxVal' h5u h5e (by rw [h5distL]; exact huu) (by rw [h5wL]; exact hidxm)]
+          exact congrArg some (congrArg₂ (· + ·) rfl hwe)
+        refine runs_vstore (j := (G.dst eFin : ℕ))
+          (by rw [evalW_var] <;> exact congrArg some h2v) hev5
+          (by rw [h51distL]; exact (G.dst eFin).isLt) ?_
+        refine finish _ (sweep_inv_relax_improve
+          ((S2.charge 1).charge 1 |>.setW "b" bit (by decide) (by decide) (by decide)
+            |>.charge 1 |>.charge 1)
+          hsrc_n h1v (lt_of_not_ge hle))
+          rfl rfl rfl rfl rfl rfl rfl rfl ?_ S.reach_u (fun v => rfl) rfl ?_
+        · simp only [hS5, hS4, State.charge, State.storeV, State.setW, h2cost]
+          omega
+        · exact edgeRelaxed_improve
+            ((S2.charge 1).charge 1 |>.setW "b" bit (by decide) (by decide) (by decide)
+              |>.charge 1 |>.charge 1)
+            huu hsrc_n h1v
 
 /-- Sweep variant of one relax loop over `u`'s CSR segment: `K = head[u+1] - head[u]`
 iterations of `sweep_relaxBody_runs`, cursor from `head u` to `head (u+1)`.  DESIGN:
