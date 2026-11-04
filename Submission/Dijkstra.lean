@@ -11,31 +11,24 @@ spliced in `Submission.Bridge`.
 
 Design (the proof-relevant points):
 
-* `m` is dispatched by the caller; this program assumes nothing about `m` but is only *used*
-  when `n ≤ m`.  It never gets stuck on any input.
 * Phase 1 builds a CSR adjacency `idx` grouped by `src` with counting sort (`head`/`pos`/`idx`),
   `O(n + m)` statements.
 * Phase 2 is array-scan Dijkstra: repeat — scan `0..n-1` for the minimum `dist` among
   `reach = 1` (reached, unsettled); if none, stop; else mark it `reach = 2` (settled, frozen)
   and relax its CSR out-edge segment.  At most `n` settlements; each scan `O(n)`, each edge
-  relaxed exactly once across all settlements, total `O(n^2 + m)`.
+  relaxed at most once across all settlements, total `O(n^2 + m)`.
 * Output contract: `reach[v] = 0` iff `v` is unreachable; otherwise `dist[v]` is the exact
   distance.  Settled vertices carry `reach = 2` (nonzero, so their label reads `dist`).
-
-Correctness shape: at every settlement the classic exchange argument gives
-`dist[best] = G.dist s best` (first unsettled vertex `x` on a shortest path to `best` has
-`dist[x] ≤ len (prefix to x) ≤ dist[best] ≤ dist[x]`; the min-scan gives `dist[best] ≤ dist[x]`),
-skipped relaxations into settled vertices cannot break anything because settled labels are
-frozen (the program never writes `reach = 2` vertices), and loop exhaustion leaves every
-reached vertex settled.  Unreached vertices decode to `⊤ = G.dist`.
-
-The counterexample that forbids arbitrary extraction order (recorded in the task riders):
-with `s→a = 5, s→b = 1, b→a = 1`, settling `a` before `b` freezes `dist[a] = 5` and skips
-`b→a`; min-extraction prevents this.
+* Settled labels are frozen (relax skips `reach = 2` targets), so the classic exchange
+  argument at settlement — `dist[best] = G.dist s best` via the first unsettled vertex on a
+  shortest path — is all the correctness the output needs.  The counterexample that forbids
+  arbitrary extraction order (settling `a` before `b` on `s→a = 5, s→b = 1, b→a = 1` freezes
+  `5` and skips `b→a`) is excluded by the min-scan.
 -/
 
 namespace BigOSpeedrun.DirectedSSSP.Dijkstra
 
+open scoped ENNReal NNReal
 open Frontier Frontier.RAM
 open WExpr Stmt
 
@@ -156,13 +149,79 @@ def prog : Stmt :=
 /-- The dense-branch program (words below `n + m + 2`, like `bfProgram`). -/
 def dijkstraProgram : Program := { body := prog, wordExp := 0 }
 
-/-! ## Semantic statement (filled by the proof) -/
+/-! ## Invariants
 
-/-- On every graph and source the program terminates without getting stuck, outputs the exact
-distances, and costs `K * (n^2 + m) + K * (n + m) + K` for a small constant `K`. -/
-theorem dijkstra_runs (G : Graph) (s : Fin G.n) :
-    ∃ fuel r, dijkstraProgram.run fuel G s = some r ∧ r.Solves G s ∧
-      (r.cost : ℝ) ≤ 40 * (((G.n : ℝ) ^ 2 + G.m) + 1) := by
-  sorry
+All invariants are history-free: `relaxed` (every edge out of a settled vertex bounds its
+target) absorbs the skipped-relaxation case, because a settled target already carries its
+true distance (`settledExact`) and the triangle inequality gives the bound.
+-/
+
+open Frontier.RAM.BF (Frame)
+
+/-- Out-degree source-counts: `cnt v = |{e < m | src e = v}|`. -/
+noncomputable def cnt (G : Graph) (v : ℕ) : ℕ :=
+  ((Finset.univ.filter (fun e : Fin G.m => (G.src e : ℕ) < v)).card)
+
+/-- Counting-sort placement rank of edge `e` among same-source edges. -/
+noncomputable def rank (G : Graph) (e : Fin G.m) : ℕ :=
+  (Finset.univ.filter (fun e' : Fin G.m => G.src e' = G.src e ∧ (e' : ℕ) < (e : ℕ))).card
+
+/-- The CSR facts established by the counting-sort build. -/
+structure CSRPart (G : Graph) (st : State ℝ≥0) : Prop where
+  hheadL : st.wlen "head" = G.n + 1
+  hposL : st.wlen "pos" = G.n
+  hidxL : st.wlen "idx" = G.m
+  head_range : ∀ v, v ≤ G.n → st.wa "head" v ≤ G.m
+  head_mono : ∀ i j, i ≤ j → j ≤ G.n → st.wa "head" i ≤ st.wa "head" j
+  head_of_cnt : ∀ v, v ≤ G.n → st.wa "head" v = cnt G v
+  csr_seg : ∀ (v : Fin G.n) q, st.wa "head" v ≤ q → q < st.wa "head" ((v : ℕ) + 1) →
+    q < G.m ∧ ∀ hq : q < G.m, G.src ⟨q, hq⟩ = v
+  csr_cover : ∀ e : Fin G.m, ∃ q, st.wa "head" (G.src e) ≤ q ∧
+    q < st.wa "head" ((G.src e : ℕ) + 1) ∧ st.wa "idx" q = e
+
+/-- The state right before the main loop: the CSR is built, `reach ∈ {0, 1}` with only `s`
+reached, `dist = 0` everywhere. -/
+structure PreMain (G : Graph) (s : Fin G.n) (st : State ℝ≥0) : Prop where
+  frame : Frontier.RAM.BF.Frame G st
+  csr : CSRPart G st
+  reach_low : ∀ v : Fin G.n, st.wa "reach" v ≤ 1
+  reach_s : st.wa "reach" s = 1
+  reach_zero : ∀ v : Fin G.n, v ≠ s → st.wa "reach" v = 0
+  dist_zero : ∀ v : Fin G.n, st.va "dist" v = 0
+
+/-- The CSR and semantic invariant of the main loop.  History-free: `relaxed` absorbs
+skipped relaxations into settled vertices via `settledExact` + the triangle inequality. -/
+structure Inv (G : Graph) (s : Fin G.n) (st : State ℝ≥0) : Prop where
+  frame : Frontier.RAM.BF.Frame G st
+  csr : CSRPart G st
+  reach_val : ∀ v : Fin G.n, st.wa "reach" v ≤ 2
+  reach_s : st.wa "reach" s ≠ 0
+  walk_sound : ∀ v : Fin G.n, st.wa "reach" v ≠ 0 →
+    ∃ p, G.IsWalk s v p ∧ G.len p = st.va "dist" v
+  settled_exact : ∀ v : Fin G.n, st.wa "reach" v = 2 →
+    ((st.va "dist" v : ℝ≥0) : ℝ≥0∞) = G.dist s v
+  relaxed : ∀ e : Fin G.m, st.wa "reach" (G.src e) = 2 →
+    st.wa "reach" (G.dst e) ≠ 0 ∧
+    (st.va "dist" (G.dst e) : ℝ≥0) ≤ st.va "dist" (G.src e) + G.w e
+  dist_s_zero : st.va "dist" s = 0
+
+/-- A freshly built state satisfies the main-loop invariant. -/
+theorem inv_of_preMain {G : Graph} {s : Fin G.n} {st : State ℝ≥0} (h : PreMain G s st) :
+    Inv G s st := by
+  refine ⟨h.frame, h.csr, fun v => Nat.le_trans (h.reach_low v) (by norm_num), ?_, ?_, ?_, ?_, ?_⟩
+  · rw [h.reach_s]; simp
+  · intro v hv
+    by_cases hs : v = s
+    · subst hs
+      exact ⟨[], Graph.IsWalk.nil _, by simp [h.dist_zero]⟩
+    · rw [h.reach_zero v hs] at hv
+      exact absurd hv (by simp)
+  · intro v hv
+    have hle : st.wa "reach" v ≤ 1 := h.reach_low v
+    omega
+  · intro e he
+    have hle : st.wa "reach" (G.src e) ≤ 1 := h.reach_low _
+    omega
+  · exact h.dist_zero s
 
 end BigOSpeedrun.DirectedSSSP.Dijkstra

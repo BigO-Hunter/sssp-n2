@@ -1,4 +1,5 @@
 import Submission.SsspStatement
+import Submission.Validation
 import Submission.Dijkstra
 
 /-!
@@ -28,6 +29,7 @@ namespace BigOSpeedrun.DirectedSSSP.Bridge
 
 open scoped ENNReal NNReal
 open Frontier Frontier.RAM BigOSpeedrun.DirectedSSSP.Dijkstra
+open BigOSpeedrun.DirectedSSSP.Validation (CorrectWithin.mono)
 
 /-- Dispatch: sparse graphs (`m < n`) take Bellman–Ford, dense graphs take array-scan
 Dijkstra.  `wordExp = 0` and `procs = []` match both branches. -/
@@ -129,19 +131,44 @@ theorem sparse_two_zero {n m : ℕ} : Sparse ((2 : ℚ) / 1) ((0 : ℚ) / 1) n m
 /-- Clause 2 (the polynomial fallback) on both branches; the bound is `C * (n+1) * (m+1)`
 left-associated, matching `Bound`. -/
 theorem clause2 : ∀ (G : Graph) (s : Fin G.n),
-    CorrectWithin dispatchProgram G s (120 * ((G.n : ℝ) + 1) * ((G.m : ℝ) + 1)) := by
-  sorry
+    CorrectWithin dispatchProgram G s (130 * ((G.n : ℝ) + 1) * ((G.m : ℝ) + 1)) := by
+  intro G s
+  by_cases hm : G.m < G.n
+  · exact CorrectWithin.mono (bf_branch_run hm) (by
+      have hn0 : (0 : ℝ) ≤ G.n := Nat.cast_nonneg _
+      have hm0 : (0 : ℝ) ≤ G.m := Nat.cast_nonneg _
+      nlinarith)
+  · exact CorrectWithin.mono (dijkstra_branch_run hm) (by
+      have hn0 : (0 : ℝ) ≤ G.n := Nat.cast_nonneg _
+      have hm0 : (0 : ℝ) ≤ G.m := Nat.cast_nonneg _
+      have hnm : (G.n : ℝ) ≤ G.m := by exact_mod_cast Nat.le_of_not_lt hm
+      nlinarith)
 
 /-- Clause 1 (the row bound at `m ≤ n²`, `n ≥ 16`) on both branches. -/
 theorem clause1 : ∀ (G : Graph) (s : Fin G.n), 16 ≤ G.n →
     Sparse ((2 : ℚ) / 1) ((0 : ℚ) / 1) G.n G.m →
-    CorrectWithin dispatchProgram G s (120 * Time ((2 : ℚ) / 1) ((0 : ℚ) / 1) ((0 : ℚ) / 1) G.n) := by
-  sorry
+    CorrectWithin dispatchProgram G s (130 * Time ((2 : ℚ) / 1) ((0 : ℚ) / 1) ((0 : ℚ) / 1) G.n) := by
+  intro G s hn hsp
+  have htime : Time ((2 : ℚ) / 1) ((0 : ℚ) / 1) ((0 : ℚ) / 1) G.n = (G.n : ℝ) ^ 2 :=
+    time_two_zero_zero G.n hn
+  have hsp' : (G.m : ℝ) ≤ (G.n : ℝ) ^ 2 := sparse_two_zero.mp hsp
+  rw [htime]
+  by_cases hm : G.m < G.n
+  · exact CorrectWithin.mono (bf_branch_run hm) (by
+      have hn0 : (0 : ℝ) ≤ G.n := Nat.cast_nonneg _
+      have hm0 : (0 : ℝ) ≤ G.m := Nat.cast_nonneg _
+      have hmn : (G.m : ℝ) < G.n := by exact_mod_cast hm
+      have hnR : (16 : ℝ) ≤ G.n := by exact_mod_cast hn
+      nlinarith)
+  · exact CorrectWithin.mono (dijkstra_branch_run hm) (by
+      have hn0 : (0 : ℝ) ≤ G.n := Nat.cast_nonneg _
+      have hn1 : (1 : ℝ) ≤ G.n := by exact_mod_cast (le_trans (by norm_num) hn)
+      nlinarith)
 
 /-- The row: `Bound 2 0 2 0 0`. -/
 theorem dispatch_bound :
     Bound ((2 : ℚ) / 1) ((0 : ℚ) / 1) ((2 : ℚ) / 1) ((0 : ℚ) / 1) ((0 : ℚ) / 1) := by
-  refine ⟨dispatchProgram, ?_, 120, by norm_num, 16, by norm_num, clause1, clause2⟩
+  refine ⟨dispatchProgram, ?_, 130, by norm_num, 16, by norm_num, clause1, clause2⟩
   intro G s
   obtain ⟨f, r, hr, hs, _⟩ := clause2 G s
   exact ⟨f, r, hr, hs⟩
