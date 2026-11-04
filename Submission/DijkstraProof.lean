@@ -387,6 +387,181 @@ theorem inv_relax_improve {G : Graph} {s : Fin G.n} {st : State ℝ≥0}
     · rw [hdist' s, if_neg hse]
       exact I.dist_s_zero
 
+/-! ## The sweep invariant (R2125608238 redesign)
+
+`settleBody` stores `reach u = 2` BEFORE relaxing `u`'s out-edges one at a time, so the
+global `Inv.relaxed` does not hold at the pre-sweep state (`walk_sound` bounds reach-1
+labels only from above) and the Inv→Inv sims `relaxBody_runs`/`relaxLoop_runs` cannot be
+applied to the settle sweep.  `SweepInv` weakens `relaxed` to (a) edges out of reach-2
+sources other than `u`, and (b) `u`'s already-swept out-edges — CSR segment positions
+`q ∈ [head u, cursor)`.  `SweepInv.toInv` collapses it back to `Inv` once the cursor
+reaches `head (u + 1)`.
+-/
+
+/-- The relaxation obligation for one edge out of `u`. -/
+def EdgeRelaxed (G : Graph) (st : State ℝ≥0) (u : ℕ) (e : Fin G.m) : Prop :=
+  st.wa "reach" (G.dst e) ≠ 0 ∧
+    (st.va "dist" (G.dst e) : ℝ≥0) ≤ st.va "dist" u + G.w e
+
+/-- Sweep invariant of the settle sweep, at the relax cursor `st.w "j"`.  Identical to
+`Inv` except for `relaxed`, which is required only for reach-2 sources `≠ u` and for `u`'s
+out-edges at already-swept segment positions `q < st.w "j"`. -/
+structure SweepInv (G : Graph) (s : Fin G.n) (u : ℕ) (st : State ℝ≥0) : Prop where
+  frame : Frontier.RAM.BF.Frame G st
+  csr : CSRPart G st
+  reach_val : ∀ v : Fin G.n, st.wa "reach" v ≤ 2
+  reach_s : st.wa "reach" s ≠ 0
+  reach_u : st.wa "reach" u = 2
+  cursor_ge : st.wa "head" u ≤ st.w "j"
+  cursor_le : st.w "j" ≤ st.wa "head" (u + 1)
+  walk_sound : ∀ v : Fin G.n, st.wa "reach" v ≠ 0 →
+    ∃ p, G.IsWalk s v p ∧ G.len p = st.va "dist" v
+  settled_exact : ∀ v : Fin G.n, st.wa "reach" v = 2 →
+    ((st.va "dist" v : ℝ≥0) : ℝ≥0∞) = G.dist s v
+  relaxed_other : ∀ e : Fin G.m, (G.src e : ℕ) ≠ u → st.wa "reach" (G.src e) = 2 →
+    st.wa "reach" (G.dst e) ≠ 0 ∧
+    (st.va "dist" (G.dst e) : ℝ≥0) ≤ st.va "dist" (G.src e) + G.w e
+  relaxed_swept : ∀ q : ℕ, st.wa "head" u ≤ q → q < st.w "j" →
+    ∀ hq : q < G.m, ∀ hidx : st.wa "idx" q < G.m,
+      EdgeRelaxed G st u ⟨st.wa "idx" q, hidx⟩
+  dist_s_zero : st.va "dist" s = 0
+
+theorem SweepInv.setW {G : Graph} {s : Fin G.n} {u : ℕ} {st : State ℝ≥0}
+    (S : SweepInv G s u st) (x : String) (a : ℕ)
+    (hxn : x ≠ "n") (hxm : x ≠ "m") (hxj : x ≠ "j") : SweepInv G s u (st.setW x a) := by
+  obtain ⟨hfr, hcsr, hrv, hrs, hru, hcg, hcl, hws, hse, hro, hrs2, hds⟩ := S
+  refine ⟨hfr.setW hxn hxm a, hcsr.setW x a, hrv, hrs, hru, ?_, ?_, hws, hse, hro, ?_, hds⟩
+  · simpa [State.setW, Ne.symm hxj] using hcg
+  · simpa [State.setW, Ne.symm hxj] using hcl
+  · intro q h1 h2 hq hidx
+    have h2' : q < st.w "j" := by rwa [show (st.setW x a).w "j" = st.w "j" by
+      simp [State.setW, Ne.symm hxj]] at h2
+    exact hrs2 q h1 h2' hq hidx
+
+theorem SweepInv.charge {G : Graph} {s : Fin G.n} {u : ℕ} {st : State ℝ≥0}
+    (S : SweepInv G s u st) (k : ℕ) : SweepInv G s u (st.charge k) := by
+  obtain ⟨hfr, hcsr, hrv, hrs, hru, hcg, hcl, hws, hse, hro, hrs2, hds⟩ := S
+  exact ⟨hfr.charge k, hcsr.charge k, hrv, hrs, hru, hcg, hcl, hws, hse, hro, hrs2, hds⟩
+
+/-- The cursor advance of `relaxBody`'s tail: once the edge at position `j` is relaxed,
+`wset "j" (j+1)` extends the swept segment by one position. -/
+theorem SweepInv.advance {G : Graph} {s : Fin G.n} {u : ℕ} {st : State ℝ≥0}
+    (S : SweepInv G s u st) (huu : u < G.n)
+    (hcur : st.w "j" < st.wa "head" (u + 1))
+    (hedge : ∀ hidx : st.wa "idx" (st.w "j") < G.m,
+      EdgeRelaxed G st u ⟨st.wa "idx" (st.w "j"), hidx⟩) :
+    SweepInv G s u (st.setW "j" (st.w "j" + 1)) := by
+  obtain ⟨hfr, hcsr, hrv, hrs, hru, hcg, hcl, hws, hse, hro, hrs2, hds⟩ := S
+  refine ⟨hfr.setW (by decide) (by decide) (st.w "j" + 1), hcsr.setW "j" (st.w "j" + 1),
+    hrv, hrs, hru, ?_, ?_, hws, hse, hro, ?_, hds⟩
+  · simp [State.setW]
+    omega
+  · simp [State.setW]
+    omega
+  · intro q h1 h2 hq hidx
+    have hqj : q < st.w "j" ∨ q = st.w "j" := by
+      have h2' : q < st.w "j" + 1 := by
+        rwa [show (st.setW "j" (st.w "j" + 1)).w "j" = st.w "j" + 1 by simp [State.setW]] at h2
+      omega
+    rcases hqj with hqj | hqj
+    · exact hrs2 q h1 hqj hq hidx
+    · subst hqj
+      exact hedge hidx
+
+/-- Sweep-end collapse: once the cursor reaches `head (u+1)` every out-edge of `u` is
+swept (`csr_cover`), so `SweepInv` upgrades to the full `Inv`. -/
+theorem SweepInv.toInv {G : Graph} {s : Fin G.n} {u : ℕ} {st : State ℝ≥0}
+    (S : SweepInv G s u st) (huu : u < G.n) (hjend : st.w "j" = st.wa "head" (u + 1)) :
+    Inv G s st := by
+  obtain ⟨hfr, hcsr, hrv, hrs, hru, hcg, hcl, hws, hse, hro, hrs2, hds⟩ := S
+  refine ⟨hfr, hcsr, hrv, hrs, hws, hse, ?_, hds⟩
+  intro e he
+  by_cases hne : (G.src e : ℕ) = u
+  · -- `e` is one of `u`'s out-edges: `csr_cover` places it at some swept position `q`
+    obtain ⟨q, hq1, hq2, hq3⟩ := hcsr.csr_cover e
+    have hq1' : st.wa "head" u ≤ q := by rwa [hne] at hq1
+    have hq2' : q < st.w "j" := by
+      rw [hjend]
+      rwa [hne] at hq2
+    obtain ⟨hlt, hidx, -⟩ := hcsr.csr_seg ⟨u, huu⟩ q hq1'
+      (by show q < st.wa "head" (u + 1); rw [← hjend]; exact hq2')
+    have heq : (⟨st.wa "idx" q, hidx⟩ : Fin G.m) = e :=
+      Fin.ext (show (st.wa "idx" q : ℕ) = ↑e from hq3)
+    have hE := hrs2 q hq1' hq2' hlt hidx
+    rw [heq] at hE
+    have hE' : st.wa "reach" (G.dst e) ≠ 0 ∧
+        (st.va "dist" (G.dst e) : ℝ≥0) ≤ st.va "dist" u + G.w e := hE
+    exact ⟨hE'.1, by rw [hne]; exact hE'.2⟩
+  · exact hro e hne he
+
+/-! ## Sweep-invariant relax sims (statement + design; fills follow)
+
+Each mirrors its `Inv` counterpart (`inv_relax_unreached` / `inv_relax_improve` /
+`relaxBody_runs` / `relaxLoop_runs`) with `SweepInv` in place of `Inv`.  REUSE MAP:
+the branch structure, state-chains and finish-helper of `relaxBody_runs` below transfer
+verbatim (its three branches already carry the exact simp/rw spines); the only new
+obligations are `relaxed_swept`'s one-position extension, discharged through
+`SweepInv.advance` + `EdgeRelaxed`, and `relaxed_other`, whose preservation argument is
+byte-identical to the `relaxed` field proof in `inv_relax_unreached`/`inv_relax_improve`
+(the written vertex `v` has `reach v ∈ {0, 1}` post-step, so no reach-2 source other than
+`u` can point at it vacuously — exactly the `hse` case-split there). -/
+
+set_option maxHeartbeats 800000 in
+/-- Sweep variant of one relax step (`relaxBody`) over edge `idx[st.w "j"]`: preserves
+`SweepInv` and advances the cursor.  DESIGN: identical spine to `relaxBody_runs` below
+(h2v2 settled-target skip / h0v unreached write / else compare-branch), with
+`inv_relax_unreached` / `inv_relax_improve` swapped for the SweepInv versions
+(`sweep_relax_unreached` / `sweep_relax_improve`, whose internals are the same case
+analyses over `relaxed_other` + `relaxed_swept`) and the tail `wset "j"` discharged by
+`SweepInv.advance` with `hedge` = the branch's own `EdgeRelaxed` fact for `eFin`. -/
+theorem sweep_relaxBody_runs {G : Graph} {s : Fin G.n} {st : State ℝ≥0} {u : ℕ}
+    (S : SweepInv G s u st) (huu : u < G.n) (hwu : st.w "u" = u)
+    (hj : st.wa "head" u ≤ st.w "j") (hjend : st.w "j" < st.wa "head" (u + 1)) :
+    Runs realOps relaxBody st (fun st' => SweepInv G s u st' ∧
+      st'.w "j" = st.w "j" + 1 ∧ st'.w "u" = st.w "u" ∧ st'.w "jend" = st.w "jend" ∧
+      st'.w "k" = st.w "k" ∧ st'.w "best" = st.w "best" ∧ st'.w "i" = st.w "i" ∧
+      settledEdges G st' = settledEdges G st ∧ settleCard G st' = settleCard G st ∧
+      (st'.cost : ℝ) ≤ st.cost + 8 ∧ st'.wa "reach" u = 2 ∧
+      ∀ v : ℕ, st'.wa "head" v = st.wa "head" v) := by
+  sorry
+
+/-- Sweep variant of one relax loop over `u`'s CSR segment: `K = head[u+1] - head[u]`
+iterations of `sweep_relaxBody_runs`, cursor from `head u` to `head (u+1)`.  DESIGN:
+counted `runs_while` exactly like `relaxLoop_runs` below, invariant `J k t = SweepInv ∧
+t.w "j" = head u + k ∧ <same view/settled/card conjuncts> ∧ t.cost ≤ st.cost + 9*k`; the
+step calls `sweep_relaxBody_runs` at `(t.charge 1)`; the exit yields `SweepInv` at cursor
+`head (u+1)`, ready for `SweepInv.toInv`. -/
+theorem sweep_relaxLoop_runs {G : Graph} {s : Fin G.n} {st : State ℝ≥0} {u : ℕ}
+    (S : SweepInv G s u st) (huu : u < G.n) (hwu : st.w "u" = u)
+    (hj0 : st.w "j" = st.wa "head" u) (hjend : st.w "jend" = st.wa "head" (u + 1)) :
+    Runs realOps relaxLoop st (fun st' => SweepInv G s u st' ∧
+      st'.w "j" = st.wa "head" (u + 1) ∧ st'.w "u" = st.w "u" ∧ st'.w "jend" = st.w "jend" ∧
+      st'.w "k" = st.w "k" ∧ st'.w "best" = st.w "best" ∧ st'.w "i" = st.w "i" ∧
+      settledEdges G st' = settledEdges G st ∧ settleCard G st' = settleCard G st ∧
+      (st'.cost : ℝ) ≤ st.cost + 9 * (st.wa "head" (u + 1) - st.wa "head" u) + 1 ∧
+      st'.wa "reach" u = 2 ∧ ∀ v : ℕ, st'.wa "head" v = st.wa "head" v) := by
+  sorry
+
+/-- One settle step in full: `settleBody` from an `Inv` state settles its scan winner `u`
+exactly (exchange = `min_settled_exact`) and sweeps its out-edges (`sweep_relaxLoop_runs`),
+ending at `Inv ∧ reach u = 2`.  DESIGN: state chain `wset "u" best` → `wstore "reach" u 2`
+→ `wset "j" head[u]` → `wset "jend" head[u+1]` → `relaxLoop`; establish `SweepInv` at the
+pre-sweep state (cursor = `head u` makes `relaxed_swept` vacuous; `settled_exact u` =
+`min_settled_exact I hu hmin`; `relaxed_other` = the pre-store `Inv.relaxed` since the
+store changes only `reach u : 1 → 2`), run `sweep_relaxLoop_runs`, conclude with
+`SweepInv.toInv` + `reach_u`. -/
+theorem settleBody_runs {G : Graph} {s : Fin G.n} {st : State ℝ≥0} {u : Fin G.n}
+    (I : Inv G s st) (hu : st.wa "reach" u = 1) (hbest : st.w "best" = u) (huu : u < G.n)
+    (hmin : ∀ v : Fin G.n, st.wa "reach" v = 1 → (st.va "dist" u : ℝ≥0) ≤ st.va "dist" v) :
+    Runs realOps settleBody st (fun st' => Inv G s st' ∧ st'.wa "reach" u = 2 ∧
+      st'.w "u" = u ∧ st'.w "j" = st.wa "head" (u + 1) ∧ st'.w "jend" = st.wa "head" (u + 1) ∧
+      st'.w "k" = st.w "k" ∧ st'.w "best" = st.w "best" ∧ st'.w "i" = st.w "i" ∧
+      settleCard G st' = settleCard G st + 1 ∧
+      settledEdges G st' = settledEdges G st + srcCnt G u G.m ∧
+      (st'.cost : ℝ) ≤ st.cost + 9 * (st.wa "head" (u + 1) - st.wa "head" u) + 8 ∧
+      ∀ v : ℕ, st'.wa "head" v = st.wa "head" v) := by
+  sorry
+
 set_option maxHeartbeats 800000 in
 /-- One relax step (`relaxBody`) over edge `idx[st.w "j"]` of `u`'s CSR segment
 preserves `Inv` and advances the cursor.  Settled targets are skipped mechanically; the
