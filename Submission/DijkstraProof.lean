@@ -399,29 +399,28 @@ theorem relaxBody_runs {G : Graph} {s : Fin G.n} {st : State ℝ≥0} {u : ℕ}
       st'.w "k" = st.w "k" ∧ st'.w "best" = st.w "best" ∧ st'.w "i" = st.w "i" ∧
       settledEdges G st' = settledEdges G st ∧ settleCard G st' = settleCard G st ∧
       (st'.cost : ℝ) ≤ st.cost + 8) := by
-  /- PROOF DESIGN (the constructor spine compiles; branches are mechanical):
-  Fact chain: obtain ⟨hjlt, hidxlt, hsegsrc⟩ := I.csr.csr_seg ⟨u, huu⟩ (st.w "j") hj hjend;
-  eFin := ⟨st.wa "idx" (st.w "j"), hidxlt⟩; hsrc_e : G.src eFin = ⟨u, huu⟩ := hsegsrc hidxlt.
-  States: st1 := (st.setW "e" idx).charge 1; st2 := (st1.setW "v" ↑(G.dst eFin)).charge 1.
-  Evals: heval (load idx), heval2 (load dst via h1e/h1dstL), hrel k (evalV relaxVal at
-  st2.charge k via eval_relaxVal' + h2u/h2e + frame.hw), hreachv, htest2 (evalW_eq_of).
-  finish : mid with Inv + views (u-end/jend/k/best/i/j via rfl-or-hwu; settledEdges/
-  settleCard via _storeW1 lemmas at the unreached branch, rfl at the others) + cost ≤ 7
-  runs `wset "j" (j+1)` to the postcondition (Inv via Inv.setW/charge).
-  Branch reach=2: runs_ite_true htest2v one_ne_zero (runs_skip); mid = (st2.charge 1).charge 1.
-  Branch reach=0: runs_ite_true htest0v → runs_seq (runs_vstore dist v cand) (runs_wstore
-  reach v 1); Inv via inv_relax_unreached (u := ⟨u,huu⟩) (e := eFin) (hI4.charge 2) hu hsrc_e h0;
-  counts via settledEdges_storeW1/settleCard_storeW1 at the pre-storeW state.
-  Branch reach=1: runs_ite_false htest0v; vle hdv (hrel 2); bit := decide(dist[v] ≤ cand);
-  bit=1 → skip (Inv chain only); bit=0 → runs_vstore; Inv via inv_relax_improve with
-  himp := lt_of_not_ge; cost totals: ≤ 8 incl. the finish step. Gotchas learned here:
-  (i) eval goals at nested states: `rw [evalW_var]; exact congrArg some h2v` (NOT simp —
-  simp expands the record and congrArg then fails); (ii) bounds: `simp [State.charge,
-  State.setW, State.storeV, State.storeW, hdistL]; exact (G.dst eFin).isLt` (st-level
-  equations, st2-level ones don't match post-normalization); (iii) `show X by tac; tac` with
-  `;` breaks parsing across lines — use `show X from (by tac\n tac)`; (iv) charge-layer
-  counting: runs_ite charges 1 BEFORE the branch; runs_skip adds 1 more — mid-states carry
-  the extra layers; (v) realOps.le booleans: `simp [bit, realOps, hle]`. -/
+  /- BRANCH FILL (spine above compiles; ~120 lines of mechanical tactics remain).
+  FINAL WORKING PATTERNS (each verified in this file's history):
+  * register-eval at a charged state: `by simp [evalW_var, State.charge, h2v]`
+  * cap bounds: `by exact hcap` / `by exact hcap2` / `by exact hcap0` (defeq through ALL
+    updates; omega FAILS because st2.cap is an opaque atom to it)
+  * array-length bounds: `by simp [State.charge, State.setW, State.storeV, State.storeW];
+    rw [hdistL]; exact (G.dst eFin).isLt` (simp reduces the nesting to st-level, THEN the
+    st-level equation hdistL/hreachL/hwL matches -- h2distL/h2reachL do NOT)
+  * register-view shows: `by simp [st3, State.charge, State.setW]; exact h2u` (reduces to
+    st2-level where h2u/h2e apply)
+  * view-equation args to inv_relax_unreached/inv_relax_improve at their states are defeq:
+    pass `hu`, `hsrc_e`, `h0`/`h1`, `himp` DIRECTLY with explicit (u := ⟨u, huu⟩) (e := eFin)
+  * cost goals: `simp only [State.charge, State.setW, State.storeV, h3cost]; omega` with
+    hoisted h2cost : st2.cost = st.cost + 2 / h3cost : st3.cost = st.cost + 5
+  * realOps.le booleans: `simp [bit, realOps, hle]`
+  * settleCard/edges at the unreached branch: settledEdges_storeW1 / settleCard_storeW1 at
+    the pre-storeW state (their equation arg is defeq to h0)
+  BRANCH SKELETON: h2=2 -> runs_ite_true (runs_skip) mid=(st2.charge 1).charge 1;
+  h0=0 -> runs_seq (runs_vstore ...) (runs_wstore ...) + inv_relax_unreached;
+  else -> vle + bit; bit=1 -> skip mid=(st3.charge 1).charge 1;
+  bit=0 -> runs_vstore hev3 + inv_relax_improve, mid=((st3.charge 1).storeV ...).charge 1.
+  See rider ssp-n2-resume2-progress for the full session transcript of what compiled. -/
   sorry
 
 theorem inv_of_main_step {G : Graph} {s : Fin G.n} {st st' : State ℝ≥0}
