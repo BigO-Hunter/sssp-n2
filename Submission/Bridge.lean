@@ -1,6 +1,7 @@
 import Submission.SsspStatement
 import Submission.Validation
 import Submission.Dijkstra
+import Submission.DijkstraProof
 
 /-!
 # Submission.Bridge — the dispatch splice and the arithmetic for the `n^2 ; n^2` row
@@ -73,10 +74,116 @@ theorem evalV_charge (s : State ℝ≥0) (e : VExpr) (k : ℕ) :
   | add a b iha ihb => simp only [evalV]; rw [iha, ihb]; all_goals (first | rfl | charge_simp)
   | load arr a => simp only [evalV]; rw [evalW_charge]; all_goals (first | rfl | charge_simp)
 
+/-- State-update operations commute with charging. -/
+theorem setW_charge (s : State ℝ≥0) (x : String) (a k : ℕ) :
+    (s.charge k).setW x a = (s.setW x a).charge k := by charge_simp
+theorem setV_charge (s : State ℝ≥0) (x : String) (a : ℝ≥0) (k : ℕ) :
+    (s.charge k).setV x a = (s.setV x a).charge k := by charge_simp
+theorem storeW_charge (s : State ℝ≥0) (arr : String) (i a k : ℕ) :
+    (s.charge k).storeW arr i a = (s.storeW arr i a).charge k := by charge_simp
+theorem storeV_charge (s : State ℝ≥0) (arr : String) (i : ℕ) (a : ℝ≥0) (k : ℕ) :
+    (s.charge k).storeV arr i a = (s.storeV arr i a).charge k := by charge_simp
+theorem allocW_charge (s : State ℝ≥0) (arr : String) (i k : ℕ) :
+    (s.charge k).allocW arr i = (s.allocW arr i).charge k := by charge_simp
+theorem allocV_charge (s : State ℝ≥0) (arr : String) (i k : ℕ) (z : ℝ≥0) :
+    (s.charge k).allocV arr i z = (s.allocV arr i z).charge k := by charge_simp
+theorem enter_charge (s : State ℝ≥0) (k : ℕ) :
+    (s.charge k).enter = s.enter.charge k := by charge_simp
+theorem charge_charge (s : State ℝ≥0) (k j : ℕ) :
+    (s.charge k).charge j = (s.charge j).charge k := by charge_simp
+theorem w_charge (s : State ℝ≥0) (x : String) (k : ℕ) : (s.charge k).w x = s.w x := rfl
+theorem v_charge (s : State ℝ≥0) (x : String) (k : ℕ) : (s.charge k).v x = s.v x := rfl
+theorem wa_charge (s : State ℝ≥0) (arr : String) (i k : ℕ) : (s.charge k).wa arr i = s.wa arr i := rfl
+theorem va_charge (s : State ℝ≥0) (arr : String) (i k : ℕ) : (s.charge k).va arr i = s.va arr i := rfl
+theorem wlen_charge (s : State ℝ≥0) (arr : String) (k : ℕ) : (s.charge k).wlen arr = s.wlen arr := rfl
+theorem vlen_charge (s : State ℝ≥0) (arr : String) (k : ℕ) : (s.charge k).vlen arr = s.vlen arr := rfl
+theorem cap_charge (s : State ℝ≥0) (k : ℕ) : (s.charge k).cap = s.cap := rfl
+theorem procs_charge (s : State ℝ≥0) (k : ℕ) : (s.charge k).procs = s.procs := rfl
+/-- Oriented form of charge-commutation: only the outer charge is `1`, so simp cannot loop. -/
+theorem charge_one_swap (s : State ℝ≥0) (k : ℕ) : (s.charge k).charge 1 = (s.charge 1).charge k := by
+  simp [State.charge]; omega
+
+/-- `do`-notation `pure` for `Option` is `some` (bridge for simp matching). -/
+theorem pure_some {α : Type} (a : α) : (pure a : Option α) = some a := rfl
+
 /-- Running `c` from `s.charge k` is running it from `s` and charging `k` at the end. -/
 theorem exec_charge_left (f : ℕ) (c : Stmt) (s : State ℝ≥0) (k : ℕ) :
     exec realOps f c (s.charge k) = (exec realOps f c s).map (fun r => r.charge k) := by
-  sorry -- shortcut: charge-shift transport glue (statement is true by cost-linearity of exec); filled after the Dijkstra core
+  induction f generalizing c s with
+  | zero => simp [exec]
+  | succ f ih =>
+    cases c with
+    | skip => simp [exec, charge_charge]
+    | wset x e =>
+      simp only [exec, evalW_charge, Option.bind_eq_bind, Option.map_eq_map, pure_some]
+      cases he : evalW s e <;>
+        simp only [Option.bind_some, Option.bind_none, Option.map_some, Option.map_none] <;>
+        simp [setW_charge, charge_charge, w_charge, v_charge, wa_charge, va_charge,
+          wlen_charge, vlen_charge, cap_charge, he]
+    | vset x e =>
+      simp only [exec, evalV_charge, Option.bind_eq_bind, Option.map_eq_map, pure_some]
+      cases he : evalV realOps s e <;>
+        simp only [Option.bind_some, Option.bind_none, Option.map_some, Option.map_none] <;>
+        simp [setV_charge, charge_charge, w_charge, v_charge, wa_charge, va_charge,
+          wlen_charge, vlen_charge, cap_charge, he]
+    | vle x a b =>
+      simp only [exec, evalV_charge, Option.bind_eq_bind, Option.map_eq_map, pure_some]
+      cases ha : evalV realOps s a <;> cases hb : evalV realOps s b <;>
+        simp only [Option.bind_some, Option.bind_none, Option.map_some, Option.map_none] <;>
+        simp [setW_charge, charge_charge, w_charge, v_charge, wa_charge, va_charge,
+          wlen_charge, vlen_charge, cap_charge, ha, hb]
+    | wstore arr i e =>
+      simp only [exec, evalW_charge, Option.bind_eq_bind, Option.map_eq_map, pure_some]
+      cases hi : evalW s i <;> cases he : evalW s e <;>
+        simp only [Option.bind_some, Option.bind_none, Option.map_some, Option.map_none] <;>
+        simp [storeW_charge, charge_charge, w_charge, v_charge, wa_charge, va_charge,
+          wlen_charge, vlen_charge, cap_charge, hi, he]
+    | vstore arr i e =>
+      simp only [exec, evalW_charge, evalV_charge, Option.bind_eq_bind, Option.map_eq_map,
+        pure_some]
+      cases hi : evalW s i <;> cases he : evalV realOps s e <;>
+        simp only [Option.bind_some, Option.bind_none, Option.map_some, Option.map_none] <;>
+        simp [storeV_charge, charge_charge, w_charge, v_charge, wa_charge, va_charge,
+          wlen_charge, vlen_charge, cap_charge, hi, he]
+    | walloc arr e =>
+      simp only [exec, evalW_charge, Option.bind_eq_bind, Option.map_eq_map, pure_some]
+      cases he : evalW s e <;>
+        simp only [Option.bind_some, Option.bind_none, Option.map_some, Option.map_none] <;>
+        simp [allocW_charge, charge_charge, w_charge, v_charge, wa_charge, va_charge,
+          wlen_charge, vlen_charge, cap_charge, he]
+    | valloc arr e =>
+      simp only [exec, evalW_charge, Option.bind_eq_bind, Option.map_eq_map, pure_some]
+      cases he : evalW s e <;>
+        simp only [Option.bind_some, Option.bind_none, Option.map_some, Option.map_none] <;>
+        simp [allocV_charge, charge_charge, w_charge, v_charge, wa_charge, va_charge,
+          wlen_charge, vlen_charge, cap_charge, he]
+    | seq a b =>
+      simp only [exec_seq, Option.bind_eq_bind, Option.map_eq_map, ih, option_map_bind,
+        option_bind_map]
+    | ite c a b =>
+      simp only [exec_ite, evalW_charge, Option.bind_eq_bind, Option.map_eq_map, pure_some]
+      cases he : evalW s c
+      · simp only [Option.bind_none, Option.map_none]
+      next x =>
+        simp only [Option.bind_some, Option.map_some]
+        by_cases hx : x = 0
+        · simp [hx]
+          rw [charge_charge, ih]
+        · simp [hx]
+          rw [charge_charge, ih]
+    | «while» c b =>
+      simp only [exec_while, evalW_charge, Option.bind_eq_bind, Option.map_eq_map, pure_some]
+      cases he : evalW s c
+      · simp only [Option.bind_none, Option.map_none]
+      next x =>
+        simp only [Option.bind_some, Option.map_some]
+        by_cases hx : x = 0
+        · simp [hx, charge_one_swap]
+        · simp [hx]
+          simp only [charge_one_swap, ih, option_map_bind, option_bind_map]
+    | call p =>
+      simp only [exec_call, procs_charge, Option.bind_eq_bind, Option.map_eq_map]
+      cases hp : s.procs[p]? <;> simp [enter_charge, ih, hp]
 
 /-- The composite run on the Bellman–Ford branch: same final state as `bfProgram` plus the
 dispatch test charge. -/
@@ -113,7 +220,27 @@ theorem bf_branch_run {G : Graph} {s : Fin G.n} (hm : G.m < G.n) :
 theorem dijkstra_branch_run {G : Graph} {s : Fin G.n}
     (hm : ¬ G.m < G.n) :
     CorrectWithin dispatchProgram G s (40 * (((G.n : ℝ) ^ 2 + G.m) + 1) + 1) := by
-  sorry
+  obtain ⟨fuel, r, hr, hs, hcost⟩ := dijkstra_runs G s
+  have hbase : exec realOps fuel prog (initState dijkstraProgram G s) = some r := by
+    simpa [Program.run, dijkstraProgram] using hr
+  refine ⟨fuel + 1, r.charge 1, ?_, hs, ?_⟩
+  · show dispatchProgram.run (fuel + 1) G s = some (r.charge 1)
+    simp only [Program.run]
+    rw [show dispatchProgram.body = Stmt.ite (.lt (.var "m") (.var "n"))
+        Frontier.RAM.BF.prog prog from rfl]
+    rw [exec_ite]
+    have htest : evalW (initState dispatchProgram G s) (.lt (.var "m") (.var "n")) = some 0 := by
+      simp [evalW, initState, fit, hm]
+    rw [htest]
+    simp only [Option.bind_some]
+    rw [if_neg (by decide : ¬ (0 : ℕ) ≠ 0)]
+    rw [show initState dispatchProgram G s = initState dijkstraProgram G s from rfl]
+    rw [exec_charge_left]
+    simp [hbase]
+  · show ((r.charge 1).cost : ℝ) ≤ 40 * (((G.n : ℝ) ^ 2 + G.m) + 1) + 1
+    rw [show (r.charge 1).cost = r.cost + 1 from rfl]
+    push_cast at hcost ⊢
+    linarith
 
 /-! ## The two Bound clauses -/
 
