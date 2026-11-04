@@ -220,6 +220,90 @@ theorem runs_allocAll (G : Graph) (s : Fin G.n) :
   · simp [hS5, State.allocW, State.allocV, State.charge, initState]
     omega
 
+/-! ## Rank strictness (no cardinality argument needed: proper-subset cards) -/
+
+/-- An edge's rank is strictly below its full source-class size. -/
+theorem rank_lt (G : Graph) (e : Fin G.m) :
+    rank G e < srcCnt G (G.src e) G.m := by
+  rw [rank_eq]
+  have hone : srcCnt G (G.src e) ((e : ℕ) + 1) = srcCnt G (G.src e) (e : ℕ) + 1 := by
+    rw [srcCnt_succ e.isLt]
+    simp
+  have hmono : srcCnt G (G.src e) ((e : ℕ) + 1) ≤ srcCnt G (G.src e) G.m :=
+    srcCnt_mono (G := G) (v := (G.src e : ℕ)) (e := (e : ℕ) + 1) (e' := G.m)
+      (by have := e.isLt; omega)
+  omega
+
+/-- Same-source ranks strictly follow edge order (hence `rank` is injective on a class). -/
+theorem rank_lt_of_lt {G : Graph} {e₁ e₂ : Fin G.m}
+    (hs : G.src e₁ = G.src e₂) (h : (e₁ : ℕ) < (e₂ : ℕ)) : rank G e₁ < rank G e₂ := by
+  have h1 : rank G e₁ = srcCnt G (G.src e₂) (e₁ : ℕ) := by rw [rank_eq, hs]
+  have h2 : rank G e₂ = srcCnt G (G.src e₂) (e₂ : ℕ) := rank_eq G e₂
+  rw [h2, h1]
+  have hone : srcCnt G (G.src e₂) ((e₁ : ℕ) + 1) = srcCnt G (G.src e₂) (e₁ : ℕ) + 1 := by
+    rw [srcCnt_succ e₁.isLt]
+    simp [hs]
+  have hmono : srcCnt G (G.src e₂) ((e₁ : ℕ) + 1) ≤ srcCnt G (G.src e₂) (e₂ : ℕ) :=
+    srcCnt_mono (G := G) (v := (G.src e₂ : ℕ)) (e := (e₁ : ℕ) + 1) (e' := (e₂ : ℕ)) (by omega)
+  omega
+
+/-- Prefix-count step, in `srcCnt` form. -/
+theorem cnt_step (G : Graph) (v : ℕ) : cnt G v + srcCnt G v G.m = cnt G (v + 1) := by
+  rw [cnt_succ, ← srcCnt_full]
+
+theorem cnt_top (G : Graph) : cnt G G.n = G.m := by
+  have h : (Finset.univ.filter (fun e : Fin G.m => (G.src e : ℕ) < G.n)) = Finset.univ := by
+    ext e
+    simpa [Finset.mem_filter] using (G.src e).isLt
+  unfold cnt
+  rw [h]
+  simp
+
+theorem cnt_zero (G : Graph) : cnt G 0 = 0 := by
+  unfold cnt
+  simp
+
+/-! ## Facts carried unchanged from `runs_allocAll` through the build -/
+
+/-- The part of the `allocAll` postcondition that every later phase preserves: the frame,
+the three CSR array lengths, zero-initialised `dist`, and `reach` seeded at `s` only. -/
+structure AllocFacts (G : Graph) (s : Fin G.n) (st : State ℝ≥0) : Prop where
+  frame : Frontier.RAM.BF.Frame G st
+  hheadL : st.wlen "head" = G.n + 1
+  hposL : st.wlen "pos" = G.n
+  hidxL : st.wlen "idx" = G.m
+  hdist0 : ∀ j, st.va "dist" j = 0
+  hreachS : st.wa "reach" (s : ℕ) = 1
+  hreach0 : ∀ v : ℕ, v < G.n → v ≠ (s : ℕ) → st.wa "reach" v = 0
+
+/-- `Frame` survives stores into any array other than the two input arrays. -/
+theorem frame_storeW_arr {G : Graph} {st : State ℝ≥0} (h : Frontier.RAM.BF.Frame G st)
+    {arr : String} (h1 : arr ≠ "src") (h2 : arr ≠ "dst") (j a : ℕ) :
+    Frontier.RAM.BF.Frame G (st.storeW arr j a) := by
+  obtain ⟨f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11⟩ := h
+  refine ⟨f1, f2, f3, ?_, ?_, f6, f7, f8, f9, f10, f11⟩
+  · intro j' hj'; simp [State.storeW, Ne.symm h1, f4 j' hj']
+  · intro j' hj'; simp [State.storeW, Ne.symm h2, f5 j' hj']
+
+theorem AllocFacts.setW {G : Graph} {s : Fin G.n} {st : State ℝ≥0} (h : AllocFacts G s st)
+    (x : String) (hxn : x ≠ "n") (hxm : x ≠ "m") (a : ℕ) : AllocFacts G s (st.setW x a) := by
+  obtain ⟨f1, f2, f3, f4, f5, f6, f7⟩ := h
+  exact ⟨f1.setW hxn hxm a, f2, f3, f4, f5, f6, f7⟩
+
+theorem AllocFacts.charge {G : Graph} {s : Fin G.n} {st : State ℝ≥0} (h : AllocFacts G s st)
+    (k : ℕ) : AllocFacts G s (st.charge k) := by
+  obtain ⟨f1, f2, f3, f4, f5, f6, f7⟩ := h
+  exact ⟨f1.charge k, f2, f3, f4, f5, f6, f7⟩
+
+theorem AllocFacts.storeW {G : Graph} {s : Fin G.n} {st : State ℝ≥0} (h : AllocFacts G s st)
+    (arr : String) (h1 : arr ≠ "src") (h2 : arr ≠ "dst") (h3 : arr ≠ "reach") (j a : ℕ) :
+    AllocFacts G s (st.storeW arr j a) := by
+  obtain ⟨f1, f2, f3, f4, f5, f6, f7⟩ := h
+  refine ⟨frame_storeW_arr f1 h1 h2 j a, f2, f3, f4, f5, ?_, ?_⟩
+  · simp [State.storeW, Ne.symm h3, f6]
+  · intro v hv hvs
+    simp [State.storeW, Ne.symm h3, f7 v hv hvs]
+
 theorem runs_csr (G : Graph) (s : Fin G.n) :
     Runs realOps (seq allocAll (seq initReach buildCSR)) (initState dijkstraProgram G s)
       (fun st => PreMain G s st ∧ (st.cost : ℝ) ≤ 12 * ((G.n : ℝ) + G.m) + 17) := by
