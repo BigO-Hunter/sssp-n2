@@ -421,7 +421,175 @@ theorem relaxBody_runs {G : Graph} {s : Fin G.n} {st : State ℝ≥0} {u : ℕ}
   else -> vle + bit; bit=1 -> skip mid=(st3.charge 1).charge 1;
   bit=0 -> runs_vstore hev3 + inv_relax_improve, mid=((st3.charge 1).storeV ...).charge 1.
   See rider ssp-n2-resume2-progress for the full session transcript of what compiled. -/
-  sorry
+  obtain ⟨hjm, hidxm, hsrc⟩ := I.csr.csr_seg ⟨u, huu⟩ (st.w "j") hj hjend
+  set eFin : Fin G.m := ⟨st.wa "idx" (st.w "j"), hidxm⟩ with heFin
+  have hsrc_e : G.src eFin = (⟨u, huu⟩ : Fin G.n) := hsrc hidxm
+  have hwe : st.va "w" (eFin : ℕ) = G.w eFin := I.frame.hw (eFin : ℕ) hidxm
+  have hdst_e : st.wa "dst" (eFin : ℕ) = (G.dst eFin : ℕ) := I.frame.hdst (eFin : ℕ) hidxm
+  have hcap0 : G.n + G.m + 2 ≤ st.cap := I.frame.hcap
+  have hnpos : 0 < G.n := by have := s.isLt; omega
+  -- common tail: advance the cursor `j`
+  have finish : ∀ t : State ℝ≥0, Inv G s t → t.w "j" = st.w "j" → t.w "u" = st.w "u" →
+      t.w "jend" = st.w "jend" → t.w "k" = st.w "k" → t.w "best" = st.w "best" →
+      t.w "i" = st.w "i" → settledEdges G t = settledEdges G st →
+      settleCard G t = settleCard G st → t.cost ≤ st.cost + 7 →
+      Runs realOps (wset "j" (.add (.var "j") (.lit 1))) t
+        (fun st' => Inv G s st' ∧
+          st'.w "j" = st.w "j" + 1 ∧ st'.w "u" = st.w "u" ∧ st'.w "jend" = st.w "jend" ∧
+          st'.w "k" = st.w "k" ∧ st'.w "best" = st.w "best" ∧ st'.w "i" = st.w "i" ∧
+          settledEdges G st' = settledEdges G st ∧ settleCard G st' = settleCard G st ∧
+          (st'.cost : ℝ) ≤ st.cost + 8) := by
+    intro t It h3j h3u h3jend h3k h3best h3i h3se h3sc h3cost
+    have htcap : G.n + G.m + 2 ≤ t.cap := It.frame.hcap
+    have htj : t.w "j" < G.m := by rw [h3j]; exact hjm
+    refine runs_wset (a := t.w "j" + 1)
+      (evalW_add_of (evalW_var t "j") (evalW_lit_of (by have := htcap; omega))
+        (by have := htcap; omega)) ?_
+    refine ⟨(It.setW "j" (t.w "j" + 1) (by decide) (by decide)).charge 1,
+      ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+    · simp [State.setW, State.charge, h3j]
+    · simp [State.setW, State.charge, h3u]
+    · simp [State.setW, State.charge, h3jend]
+    · simp [State.setW, State.charge, h3k]
+    · simp [State.setW, State.charge, h3best]
+    · simp [State.setW, State.charge, h3i]
+    · show settledEdges G t = settledEdges G st; exact h3se
+    · show settleCard G t = settleCard G st; exact h3sc
+    · simp [State.setW, State.charge]
+      exact_mod_cast (by omega : t.cost + 1 ≤ st.cost + 8)
+  -- e := idx[j]
+  refine runs_seq (runs_wset (a := (eFin : ℕ))
+    (by rw [evalW_load_of (evalW_var st "j") (by rw [I.csr.hidxL]; exact hjm)]) ?_)
+  set st1 : State ℝ≥0 := (st.setW "e" (eFin : ℕ)).charge 1 with hst1
+  have h1e : st1.w "e" = (eFin : ℕ) := by simp [st1, State.setW, State.charge]
+  have I1 : Inv G s st1 := (I.setW "e" (eFin : ℕ) (by decide) (by decide)).charge 1
+  -- v := dst[e]
+  have h1eval : evalW st1 (.load "dst" (.var "e")) = some ((G.dst eFin : ℕ)) := by
+    rw [evalW_load_of (j := (eFin : ℕ)) (by rw [evalW_var, h1e])
+      (by rw [I1.frame.hdstL]; exact hidxm)]
+    exact congrArg some hdst_e
+  refine runs_seq (runs_wset (a := (G.dst eFin : ℕ)) h1eval ?_)
+  set st2 : State ℝ≥0 := (st1.setW "v" (G.dst eFin : ℕ)).charge 1 with hst2
+  have h2u : st2.w "u" = u := by simp [st2, st1, State.setW, State.charge, hwu]
+  have h2v : st2.w "v" = (G.dst eFin : ℕ) := by simp [st2, State.setW, State.charge]
+  have h2e : st2.w "e" = (eFin : ℕ) := by simp [st2, st1, State.setW, State.charge]
+  have h2cost : st2.cost = st.cost + 2 := by simp [st2, st1, State.setW, State.charge]
+  have I2 : Inv G s st2 :=
+    ((I.setW "e" (eFin : ℕ) (by decide) (by decide)).charge 1
+      |>.setW "v" (G.dst eFin : ℕ) (by decide) (by decide)).charge 1
+  have h2cap : G.n + G.m + 2 ≤ st2.cap := I2.frame.hcap
+  have h2distL : st2.vlen "dist" = G.n := I2.frame.hdistL
+  have h2reachL : st2.wlen "reach" = G.n := I2.frame.hreachL
+  have h2wL : st2.vlen "w" = G.m := I2.frame.hwL
+  have hreachv : evalW st2 (.load "reach" (.var "v")) = some (st.wa "reach" (G.dst eFin)) :=
+    evalW_load_of (by rw [evalW_var, h2v]) (by rw [h2reachL]; exact (G.dst eFin).isLt)
+  have htest2 : evalW st2 (.eq (.load "reach" (.var "v")) (.lit 2)) =
+      some (if st.wa "reach" (G.dst eFin) = 2 then 1 else 0) :=
+    evalW_eq_of hreachv (evalW_lit_of (by have := h2cap; omega)) (by have := h2cap; omega)
+  -- relaxInner, then the common tail
+  refine runs_seq ?_
+  by_cases h2v2 : st.wa "reach" (G.dst eFin) = 2
+  · -- settled target: skip
+    refine runs_ite_true (x := 1) (by rw [htest2, h2v2]; rfl) one_ne_zero (runs_skip ?_)
+    refine finish _ ((I2.charge 1).charge 1) rfl rfl rfl rfl rfl rfl rfl rfl ?_
+    simp [State.charge, h2cost]
+  · refine runs_ite_false (by rw [htest2, if_neg h2v2]) ?_
+    have h21cap : G.n + G.m + 2 ≤ (st2.charge 1).cap := h2cap
+    have hreachv1 : evalW (st2.charge 1) (.load "reach" (.var "v"))
+        = some (st.wa "reach" (G.dst eFin)) := by rw [evalW_charge]; exact hreachv
+    have htestc2 : evalW (st2.charge 1) (.eq (.load "reach" (.var "v")) (.lit 0)) =
+        some (if st.wa "reach" (G.dst eFin) = 0 then 1 else 0) :=
+      evalW_eq_of hreachv1 (evalW_lit_of (by have := h21cap; omega)) (by have := h21cap; omega)
+    by_cases h0v : st.wa "reach" (G.dst eFin) = 0
+    · -- unreached target: dist[v] := dist[u] + w[e], reach[v] := 1
+      refine runs_ite_true (x := 1) (by rw [htestc2, h0v]; rfl) one_ne_zero ?_
+      set S4 : State ℝ≥0 := (st2.charge 1).charge 1 with hS4
+      have h4distL : S4.vlen "dist" = G.n := I.frame.hdistL
+      have h4reachL : S4.wlen "reach" = G.n := I.frame.hreachL
+      have h4wL : S4.vlen "w" = G.m := I.frame.hwL
+      have h4cap : G.n + G.m + 2 ≤ S4.cap := I.frame.hcap
+      have h4u : S4.w "u" = u := by simp [S4, State.charge, h2u]
+      have h4e : S4.w "e" = (eFin : ℕ) := by simp [S4, State.charge, h2e]
+      have hev4 : evalV realOps S4 relaxVal = some (st.va "dist" u + G.w eFin) := by
+        rw [eval_relaxVal' h4u h4e (by rw [h4distL]; exact huu) (by rw [h4wL]; exact hidxm)]
+        exact congrArg some (congrArg₂ (· + ·) rfl hwe)
+      refine runs_seq (runs_vstore (j := (G.dst eFin : ℕ))
+        (by rw [evalW_var] <;> exact congrArg some h2v) hev4
+        (by rw [h4distL]; exact (G.dst eFin).isLt) ?_)
+      set S5 : State ℝ≥0 := ((S4.storeV "dist" (G.dst eFin) (st.va "dist" u + G.w eFin)).charge 1)
+        with hS5
+      have h5reachL : S5.wlen "reach" = G.n := I.frame.hreachL
+      have h5cap : G.n + G.m + 2 ≤ S5.cap := I.frame.hcap
+      refine runs_wstore (j := (G.dst eFin : ℕ)) (a := 1)
+        (by rw [evalW_var] <;> exact congrArg some h2v)
+        (evalW_lit_of (by have := h5cap; omega))
+        (by rw [h5reachL]; exact (G.dst eFin).isLt) ?_
+      refine finish _ (inv_relax_unreached (I2.charge 1 |>.charge 1)
+        (u := ⟨u, huu⟩) (e := eFin) hu hsrc_e h0v) rfl rfl rfl rfl rfl rfl ?_ ?_ ?_
+      · show settledEdges G (S5.storeW "reach" (G.dst eFin) 1) = settledEdges G st
+        rw [settledEdges_storeW1 (st := S5) (v := G.dst eFin) (show S5.wa "reach" (G.dst eFin) = 0 from h0v)]
+        rfl
+      · show settleCard G (S5.storeW "reach" (G.dst eFin) 1) = settleCard G st
+        rw [settleCard_storeW1 (st := S5) (v := G.dst eFin) (show S5.wa "reach" (G.dst eFin) = 0 from h0v)]
+        rfl
+      · simp only [hS5, hS4, State.charge, State.storeV, State.storeW, State.setW, h2cost]
+        omega
+    · -- reached-unsettled target: compare, improve only on strict gain
+      have h1v : st.wa "reach" (G.dst eFin) = 1 := by
+        have hle2 := I.reach_val (G.dst eFin)
+        omega
+      refine runs_ite_false (by rw [htestc2, if_neg h0v]) ?_
+      set S4 : State ℝ≥0 := (st2.charge 1).charge 1 with hS4
+      have h4distL : S4.vlen "dist" = G.n := I.frame.hdistL
+      have h4wL : S4.vlen "w" = G.m := I.frame.hwL
+      have h4cap : G.n + G.m + 2 ≤ S4.cap := I.frame.hcap
+      have h4u : S4.w "u" = u := by simp [S4, State.charge, h2u]
+      have h4e : S4.w "e" = (eFin : ℕ) := by simp [S4, State.charge, h2e]
+      have hdv : evalV realOps S4 (.load "dist" (.var "v"))
+          = some (st.va "dist" (G.dst eFin)) := by
+        rw [evalV_load_of (by rw [evalW_var] <;> exact congrArg some h2v)
+          (by rw [h4distL]; exact (G.dst eFin).isLt)]
+        rfl
+      have hev4 : evalV realOps S4 relaxVal = some (st.va "dist" u + G.w eFin) := by
+        rw [eval_relaxVal' h4u h4e (by rw [h4distL]; exact huu) (by rw [h4wL]; exact hidxm)]
+        exact congrArg some (congrArg₂ (· + ·) rfl hwe)
+      refine runs_seq (runs_vle hdv hev4 (by have := h4cap; omega) ?_)
+      set bit : ℕ := if realOps.le (st.va "dist" (G.dst eFin)) (st.va "dist" u + G.w eFin)
+        then 1 else 0 with hbit
+      set S5 : State ℝ≥0 := ((S4.setW "b" bit).charge 1) with hS5
+      have hS5b : S5.w "b" = bit := by simp [S5, State.setW, State.charge]
+      by_cases hle : st.va "dist" (G.dst eFin) ≤ st.va "dist" u + G.w eFin
+      · have hbit1 : bit = 1 := by simp [bit, realOps, hle]
+        refine runs_ite_true (x := 1) (by rw [evalW_var, hS5b, hbit1]) one_ne_zero (runs_skip ?_)
+        refine finish _
+          (((I2.charge 1).charge 1 |>.setW "b" bit (by decide) (by decide))
+            |>.charge 1 |>.charge 1 |>.charge 1)
+          rfl rfl rfl rfl rfl rfl rfl rfl ?_
+        simp only [hS5, hS4, State.charge, State.setW, h2cost]
+        omega
+      · have hbit0 : bit = 0 := by simp [bit, realOps, hle]
+        refine runs_ite_false (by rw [evalW_var, hS5b, hbit0]) ?_
+        have h5distL : S5.vlen "dist" = G.n := I.frame.hdistL
+        have h5wL : S5.vlen "w" = G.m := I.frame.hwL
+        have h51distL : (S5.charge 1).vlen "dist" = G.n := I.frame.hdistL
+        have h5u : S5.w "u" = u := by simp [S5, S4, State.setW, State.charge, h2u]
+        have h5e : S5.w "e" = (eFin : ℕ) := by simp [S5, S4, State.setW, State.charge, h2e]
+        have hev5 : evalV realOps (S5.charge 1) relaxVal
+            = some (st.va "dist" u + G.w eFin) := by
+          rw [evalV_charge]
+          rw [eval_relaxVal' h5u h5e (by rw [h5distL]; exact huu) (by rw [h5wL]; exact hidxm)]
+          exact congrArg some (congrArg₂ (· + ·) rfl hwe)
+        refine runs_vstore (j := (G.dst eFin : ℕ))
+          (by rw [evalW_var] <;> exact congrArg some h2v) hev5
+          (by rw [h51distL]; exact (G.dst eFin).isLt) ?_
+        refine finish _ (inv_relax_improve
+          (I2.charge 1 |>.charge 1 |>.setW "b" bit (by decide) (by decide)
+            |>.charge 1 |>.charge 1)
+          (u := ⟨u, huu⟩) (e := eFin) hu hsrc_e h1v (lt_of_not_ge hle))
+          rfl rfl rfl rfl rfl rfl rfl rfl ?_
+        simp only [hS5, hS4, State.charge, State.storeV, State.setW, h2cost]
+        omega
+
 
 theorem inv_of_main_step {G : Graph} {s : Fin G.n} {st st' : State ℝ≥0}
     (I : Inv G s st) (hk : st.w "k" < G.n)
