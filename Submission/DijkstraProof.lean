@@ -1124,7 +1124,157 @@ theorem settleBody_runs {G : Graph} {s : Fin G.n} {st : State ℝ≥0} {u : Fin 
       settledEdges G st' = settledEdges G st + srcCnt G u G.m ∧
       (st'.cost : ℝ) ≤ st.cost + 9 * (st.wa "head" (u + 1) - st.wa "head" u) + 8 ∧
       ∀ v : ℕ, st'.wa "head" v = st.wa "head" v) := by
-  sorry
+  have huuN : (u : ℕ) < G.n := huu
+  have hnpos : 0 < G.n := by have := s.isLt; omega
+  -- state chain: u := best; reach[u] := 2; j := head[u]; jend := head[u+1]; relaxLoop
+  refine runs_seq (runs_wset (x := "u") (a := u) (by rw [evalW_var, hbest]) ?_)
+  set stA : State ℝ≥0 := (st.setW "u" u).charge 1 with hstA
+  have hAu : stA.w "u" = u := by simp [stA, State.setW, State.charge]
+  have hAcap : G.n + G.m + 2 ≤ stA.cap := I.frame.hcap
+  refine runs_seq (runs_wstore (arr := "reach") (j := u) (a := 2)
+    (by rw [evalW_var, hAu]) (evalW_lit_of (by have := hAcap; omega))
+    (by rw [show stA.wlen "reach" = G.n from I.frame.hreachL]; exact huuN) ?_)
+  set stB : State ℝ≥0 := (stA.storeW "reach" u 2).charge 1 with hstB
+  have hBu : stB.w "u" = u := by simp [stB, State.storeW, State.charge, hAu]
+  have hBheadL : stB.wlen "head" = G.n + 1 := I.csr.hheadL
+  refine runs_seq (runs_wset (x := "j") (a := stB.wa "head" u)
+    (by rw [evalW_load_of (by rw [evalW_var, hBu]) (by rw [hBheadL]; omega)]) ?_)
+  set stC : State ℝ≥0 := (stB.setW "j" (stB.wa "head" u)).charge 1 with hstC
+  have hCu : stC.w "u" = u := by simp [stC, State.setW, State.charge, hBu]
+  have hCcap : G.n + G.m + 2 ≤ stC.cap := I.frame.hcap
+  have hCadd : evalW stC (.add (.var "u") (.lit 1)) = some ((u : ℕ) + 1) :=
+    evalW_add_of (by rw [evalW_var, hCu]) (evalW_lit_of (by have := hCcap; omega))
+      (by have := hCcap; omega)
+  refine runs_seq (runs_wset (x := "jend") (a := stC.wa "head" (u + 1))
+    (by rw [evalW_load_of hCadd (by rw [show stC.wlen "head" = G.n + 1 from I.csr.hheadL]; omega)]) ?_)
+  set stD : State ℝ≥0 := (stC.setW "jend" (stC.wa "head" (u + 1))).charge 1 with hstD
+  -- reach/dist transport through the chain (none of the steps touch the other arrays)
+  have hreachD : ∀ v : Fin G.n, stD.wa "reach" v = if v = u then 2 else st.wa "reach" v := by
+    intro v
+    by_cases hv : v = u
+    · subst hv
+      simp [stD, stC, stB, stA, State.setW, State.storeW, State.charge]
+    · have hne : ¬ ((v : ℕ) = (u : ℕ)) := fun hh => hv (Fin.ext hh)
+      simp [stD, stC, stB, stA, State.setW, State.storeW, State.charge, hne, hv]
+  have hdistD : ∀ v : Fin G.n, stD.va "dist" v = st.va "dist" v := fun v => rfl
+  have hheadD : ∀ v : ℕ, stD.wa "head" v = st.wa "head" v := fun v => rfl
+  -- the sweep invariant at the pre-sweep state (cursor = head u makes relaxed_swept vacuous)
+  have SD : SweepInv G s u stD := by
+    refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+    · exact (((I.frame.setW (x := "u") (by decide) (by decide) u).charge 1
+        |>.storeW_reach u 2 |>.charge 1
+        |>.setW (x := "j") (by decide) (by decide) (stB.wa "head" u) |>.charge 1
+        |>.setW (x := "jend") (by decide) (by decide) (stC.wa "head" (u + 1))) |>.charge 1)
+    · exact (((I.csr.setW "u" u).charge 1 |>.storeW_reach u 2 |>.charge 1
+        |>.setW "j" (stB.wa "head" u) |>.charge 1
+        |>.setW "jend" (stC.wa "head" (u + 1))) |>.charge 1)
+    · intro v
+      rw [hreachD]
+      split_ifs
+      · omega
+      · exact I.reach_val v
+    · rw [hreachD]
+      split_ifs with hv
+      · intro h0; simp at h0
+      · exact I.reach_s
+    · rw [hreachD]
+      simp
+    · show st.wa "head" u ≤ st.wa "head" u
+      exact le_rfl
+    · show st.wa "head" u ≤ st.wa "head" (u + 1)
+      exact I.csr.head_mono u (u + 1) (by omega) (by omega)
+    · intro v hv
+      rw [hreachD] at hv
+      by_cases hve : v = u
+      · rw [hve] at hv ⊢
+        obtain ⟨p, hp, hlen⟩ := I.walk_sound u (by rw [hu]; exact one_ne_zero)
+        refine ⟨p, hp, ?_⟩
+        rw [hdistD]
+        exact hlen
+      · have hv' : st.wa "reach" v ≠ 0 := by simpa [hreachD, hve] using hv
+        obtain ⟨p, hp, hlen⟩ := I.walk_sound v hv'
+        refine ⟨p, hp, ?_⟩
+        rw [hdistD]
+        exact hlen
+    · intro v hv
+      rw [hreachD] at hv
+      by_cases hve : v = u
+      · rw [hve] at hv ⊢
+        rw [hdistD]
+        exact min_settled_exact I hu hmin
+      · have hv' : st.wa "reach" v = 2 := by simpa [hreachD, hve] using hv
+        rw [hdistD]
+        exact I.settled_exact v hv'
+    · intro e hne_u he
+      have hne : ¬ (G.src e = u) := fun hh => hne_u (congrArg Fin.val hh)
+      rw [hreachD] at he
+      rw [if_neg hne] at he
+      obtain ⟨hre, hde⟩ := I.relaxed e he
+      refine ⟨?_, ?_⟩
+      · rw [hreachD]
+        split_ifs with hd
+        · intro h0; simp at h0
+        · exact hre
+      · show (stD.va "dist" (G.dst e) : ℝ≥0) ≤ stD.va "dist" (G.src e) + G.w e
+        rw [hdistD (G.dst e), hdistD (G.src e)]
+        exact hde
+    · intro q h1 h2 hq hidx
+      exfalso
+      have hc1 : stD.w "j" = stD.wa "head" u :=
+        by simp [stD, stC, stB, stA, State.setW, State.storeW, State.charge]
+      omega
+    · show stD.va "dist" s = 0
+      rw [hdistD]
+      exact I.dist_s_zero
+  -- run the sweep
+  refine Runs.mono (sweep_relaxLoop_runs SD huuN hAu
+    (by show stD.w "j" = st.wa "head" u; rw [hstD, hstC, hstB]; rfl)
+    (by show stD.w "jend" = st.wa "head" (u + 1); rw [hstD]; rfl)) ?_
+  intro stE ⟨SE, hEj, hEu, hEjend, hEk, hEbest, hEi, hEse, hEsc, hEcost, hEru, hEhead⟩
+  have hK : st.wa "head" (u + 1) - st.wa "head" u = st.wa "head" (u + 1) - st.wa "head" u := rfl
+  refine ⟨SE.toInv huuN (hEj.trans ((hEhead _).symm)), hEru, ?_, ?_,
+    ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+  · show stE.w "u" = u
+    rw [hEu]
+    exact hAu
+  · show stE.w "j" = st.wa "head" (u + 1)
+    exact hEj.trans (hheadD _)
+  · show stE.w "jend" = st.wa "head" (u + 1)
+    rw [hEjend, hstD]
+    rfl
+  · show stE.w "k" = st.w "k"
+    rw [hEk, hstD, hstC, hstB, hstA]
+    rfl
+  · show stE.w "best" = st.w "best"
+    rw [hEbest, hstD, hstC, hstB, hstA]
+    rfl
+  · show stE.w "i" = st.w "i"
+    rw [hEi, hstD, hstC, hstB, hstA]
+    rfl
+  · show settleCard G stE = settleCard G st + 1
+    rw [hEsc]
+    have h1 : stA.wa "reach" u = 1 := hu
+    have h2 : settleCard G stD = settleCard G (stA.storeW "reach" u 2) := rfl
+    rw [h2, settleCard_storeW2 (st := stA) (u := u) h1, hstA]
+    rfl
+  · show settledEdges G stE = settledEdges G st + srcCnt G u G.m
+    rw [hEse]
+    have h1 : stA.wa "reach" u = 1 := hu
+    have h2 : settledEdges G stD = settledEdges G (stA.storeW "reach" u 2) := rfl
+    rw [h2, settledEdges_storeW2 (st := stA) (u := u) h1, hstA]
+    rfl
+  · show (stE.cost : ℝ) ≤ st.cost + 9 * (st.wa "head" (u + 1) - st.wa "head" u) + 8
+    have h1 : stD.wa "head" (u + 1) = st.wa "head" (u + 1) := hheadD _
+    have h2 : stD.wa "head" u = st.wa "head" u := hheadD _
+    have hd : stD.cost = st.cost + 4 := by
+      simp [stD, stC, stB, stA, State.setW, State.storeW, State.charge]
+    have hd' : (stD.cost : ℝ) = st.cost + 4 := by exact_mod_cast hd
+    have h := hEcost
+    rw [h1, h2] at h
+    linarith
+  · intro v
+    show stE.wa "head" v = st.wa "head" v
+    rw [hEhead, hheadD]
 
 set_option maxHeartbeats 800000 in
 /-- One relax step (`relaxBody`) over edge `idx[st.w "j"]` of `u`'s CSR segment
