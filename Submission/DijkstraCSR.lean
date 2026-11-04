@@ -689,6 +689,322 @@ theorem runs_copySection (G : Graph) (s : Fin G.n) (S : State ℝ≥0) (A : Allo
   obtain ⟨fL, rL, hexL, hAl, hPl, hHl, hCl⟩ := hloop
   exact ⟨fL, rL, hexL, hAl, hPl, hHl, by rw [hCl]; omega⟩
 
+
+/-! ## Phase C2 — `placeLoop`
+
+Cursor invariant: `pos v = head v + |{e < k | src e = v}|` and every edge below the cursor
+sits at `idx (head (src e) + rank e)`.  Cost `6m + 1` (`5` statements + `1` test per
+iteration, plus the exit test; with the `wset e 0` prologue, `6m + 2`). -/
+
+/-- Rank of an edge below the cursor is below its source class' *cursor* count. -/
+theorem rank_lt_cursor {G : Graph} {e : Fin G.m} {k : ℕ} (hek : (e : ℕ) < k) :
+    rank G e < srcCnt G (G.src e : ℕ) k := by
+  rw [rank_eq]
+  have hone : srcCnt G (G.src e : ℕ) ((e : ℕ) + 1) = srcCnt G (G.src e : ℕ) (e : ℕ) + 1 := by
+    rw [srcCnt_succ e.isLt]
+    simp
+  have hmono : srcCnt G (G.src e : ℕ) ((e : ℕ) + 1) ≤ srcCnt G (G.src e : ℕ) k :=
+    srcCnt_mono (G := G) (v := (G.src e : ℕ)) (e := (e : ℕ) + 1) (e' := k) (by omega)
+  omega
+
+/-- The cursor cell of the current source is not yet exhausted: placing edge `k` lands
+strictly inside `p`'s tiling cell `[cnt p, cnt (p+1))`. -/
+theorem place_cell_lt (G : Graph) {k : ℕ} (hkm : k < G.m) :
+    cnt G (G.src ⟨k, hkm⟩ : ℕ) + srcCnt G (G.src ⟨k, hkm⟩ : ℕ) k <
+      cnt G ((G.src ⟨k, hkm⟩ : ℕ) + 1) := by
+  have hs : srcCnt G (G.src ⟨k, hkm⟩ : ℕ) (k + 1) =
+      srcCnt G (G.src ⟨k, hkm⟩ : ℕ) k + 1 := by
+    rw [srcCnt_succ hkm]
+    simp
+  have hle : srcCnt G (G.src ⟨k, hkm⟩ : ℕ) (k + 1) ≤ srcCnt G (G.src ⟨k, hkm⟩ : ℕ) G.m :=
+    srcCnt_mono (G := G) (v := (G.src ⟨k, hkm⟩ : ℕ)) (e := k + 1) (e' := G.m) (by omega)
+  have h := cnt_step (G := G) (G.src ⟨k, hkm⟩ : ℕ)
+  omega
+
+/-- A previously placed edge occupies a slot different from the one edge `k` takes. -/
+theorem place_slot_ne {G : Graph} {k : ℕ} (hkm : k < G.m) {e : Fin G.m}
+    (hek : (e : ℕ) < k) :
+    cnt G (G.src e : ℕ) + rank G e ≠
+      cnt G (G.src ⟨k, hkm⟩ : ℕ) + srcCnt G (G.src ⟨k, hkm⟩ : ℕ) k := by
+  have hpcell : cnt G (G.src ⟨k, hkm⟩ : ℕ) + srcCnt G (G.src ⟨k, hkm⟩ : ℕ) k <
+      cnt G ((G.src ⟨k, hkm⟩ : ℕ) + 1) := place_cell_lt (G := G) hkm
+  have hecell : cnt G (G.src e : ℕ) + rank G e < cnt G ((G.src e : ℕ) + 1) := by
+    have herank : rank G e < srcCnt G (G.src e : ℕ) k := rank_lt_cursor hek
+    have hle : srcCnt G (G.src e : ℕ) k ≤ srcCnt G (G.src e : ℕ) G.m :=
+      srcCnt_mono (G := G) (v := (G.src e : ℕ)) (e := k) (e' := G.m) (by omega)
+    have h := cnt_step (G := G) (G.src e : ℕ)
+    omega
+  rcases lt_trichotomy (G.src e : ℕ) (G.src ⟨k, hkm⟩ : ℕ) with hlt | heq | hgt
+  · have hmono : cnt G ((G.src e : ℕ) + 1) ≤ cnt G (G.src ⟨k, hkm⟩ : ℕ) :=
+      cnt_mono (G := G) (by omega)
+    have h1 : cnt G (G.src e : ℕ) + rank G e < cnt G (G.src ⟨k, hkm⟩ : ℕ) :=
+      lt_of_lt_of_le hecell hmono
+    have h2 : cnt G (G.src ⟨k, hkm⟩ : ℕ) ≤
+        cnt G (G.src ⟨k, hkm⟩ : ℕ) + srcCnt G (G.src ⟨k, hkm⟩ : ℕ) k :=
+      Nat.le_add_right _ _
+    exact Nat.ne_of_lt (lt_of_lt_of_le h1 h2)
+  · have herank : rank G e < srcCnt G (G.src e : ℕ) k := rank_lt_cursor hek
+    have herank' : rank G e < srcCnt G (G.src ⟨k, hkm⟩ : ℕ) k := by rw [← heq]; exact herank
+    have hceq : cnt G (G.src e : ℕ) = cnt G (G.src ⟨k, hkm⟩ : ℕ) := by rw [heq]
+    rw [hceq]
+    exact Nat.ne_of_lt (Nat.add_lt_add_left herank' _)
+  · have hmono : cnt G ((G.src ⟨k, hkm⟩ : ℕ) + 1) ≤ cnt G (G.src e : ℕ) :=
+      cnt_mono (G := G) (by omega)
+    have h4 : cnt G (G.src ⟨k, hkm⟩ : ℕ) + srcCnt G (G.src ⟨k, hkm⟩ : ℕ) k <
+        cnt G (G.src e : ℕ) := lt_of_lt_of_le hpcell hmono
+    have h5 : cnt G (G.src e : ℕ) ≤ cnt G (G.src e : ℕ) + rank G e :=
+      Nat.le_add_right _ _
+    exact Ne.symm (Nat.ne_of_lt (lt_of_lt_of_le h4 h5))
+
+/-- Placement invariant. -/
+structure PlaceInv (G : Graph) (s : Fin G.n) (S : State ℝ≥0) (k : ℕ) (t : State ℝ≥0) : Prop where
+  alloc : AllocFacts G s t
+  we : t.w "e" = k
+  headcnt : ∀ v, v ≤ G.n → t.wa "head" v = cnt G v
+  posform : ∀ v, v < G.n → t.wa "pos" v = t.wa "head" v + srcCnt G v k
+  place : ∀ e : Fin G.m, (e : ℕ) < k →
+    t.wa "idx" (t.wa "head" (G.src e) + rank G e) = (e : ℕ)
+  cost : t.cost = S.cost + 1 + 6 * k
+
+theorem placeBody_runs {G : Graph} {s : Fin G.n} {S : State ℝ≥0} {k : ℕ} (hkm : k < G.m)
+    {t : State ℝ≥0} (It : PlaceInv G s S k t) :
+    Runs realOps placeBody (t.charge 1) (PlaceInv G s S (k + 1)) := by
+  obtain ⟨A, hwe, hheadcnt, hposform, hplace, hcost⟩ := It
+  have hcap : G.n + G.m + 2 ≤ t.cap := A.frame.hcap
+  set p : ℕ := (G.src ⟨k, hkm⟩ : ℕ) with hp
+  have hpL : p < G.n := by rw [hp]; exact (G.src ⟨k, hkm⟩).isLt
+  have hsrc : t.wa "src" k = p := A.frame.hsrc k hkm
+  have hheadp : t.wa "head" p = cnt G p := hheadcnt p (by omega)
+  -- 1: `p := src[e]`
+  have hE1 : evalW (t.charge 1) (.load "src" (.var "e")) = some p := by
+    rw [evalW_load_of (show evalW (t.charge 1) (.var "e") = some k by
+          simp [evalW_var, State.charge, hwe])
+        (show k < (t.charge 1).wlen "src" by
+          show k < t.wlen "src"; rw [A.frame.hsrcL]; exact hkm)]
+    exact congrArg some hsrc
+  refine runs_seq (runs_wset (x := "p") (e := .load "src" (.var "e")) (a := p) hE1 ?_)
+  set T1 : State ℝ≥0 := ((t.charge 1).setW "p" p).charge 1 with hT1
+  have hT1p : T1.w "p" = p := by simp [hT1, State.setW, State.charge]
+  have hT1posL : T1.wlen "pos" = G.n := by
+    rw [hT1]; simp only [State.setW, State.charge]; exact A.hposL
+  have hT1cap : G.n + G.m + 2 ≤ T1.cap := hcap
+  have hposp : T1.wa "pos" p = t.wa "head" p + srcCnt G p k := by
+    rw [hT1]; simp only [State.setW, State.charge]; exact hposform p hpL
+  -- 2: `q := pos[p]`
+  have hE2 : evalW T1 (.load "pos" (.var "p")) = some (t.wa "head" p + srcCnt G p k) := by
+    rw [evalW_load_of (show evalW T1 (.var "p") = some p by rw [evalW_var, hT1p])
+      (show p < T1.wlen "pos" by rw [hT1posL]; omega)]
+    exact congrArg some hposp
+  refine runs_seq (runs_wset (x := "q") (e := .load "pos" (.var "p"))
+    (a := t.wa "head" p + srcCnt G p k) hE2 ?_)
+  set q : ℕ := t.wa "head" p + srcCnt G p k with hq
+  set T2 : State ℝ≥0 := ((T1.setW "q" q).charge 1) with hT2
+  have hT2q : T2.w "q" = q := by simp [hT2, State.setW, State.charge]
+  have hT2e : T2.w "e" = k := by
+    simp [hT2, hT1, State.setW, State.charge, hwe]
+  have hT2idxL : T2.wlen "idx" = G.m := by
+    rw [hT2, hT1]; simp only [State.setW, State.charge]; exact A.hidxL
+  have hT2cap : G.n + G.m + 2 ≤ T2.cap := hcap
+  have hqm : q < G.m := by
+    rw [hq, hheadp]
+    have := place_cell_lt (G := G) hkm
+    have := cnt_le G ((G.src ⟨k, hkm⟩ : ℕ) + 1)
+    rw [hp] at *
+    omega
+  -- 3: `idx[q] := e`
+  refine runs_seq (runs_wstore (arr := "idx") (i := .var "q") (e := .var "e") (j := q) (a := k)
+    (show evalW T2 (.var "q") = some q by rw [evalW_var, hT2q])
+    (show evalW T2 (.var "e") = some k by rw [evalW_var, hT2e])
+    (show q < T2.wlen "idx" by rw [hT2idxL]; exact hqm) ?_)
+  set T3 : State ℝ≥0 := (T2.storeW "idx" q k).charge 1 with hT3
+  have hT3posL : T3.wlen "pos" = G.n := by
+    rw [hT3, hT2, hT1]; simp only [State.storeW, State.setW, State.charge]; exact A.hposL
+  have hT3p : T3.w "p" = p := by
+    simp [hT3, hT2, hT1, State.storeW, State.setW, State.charge, hT1p]
+  have hT3q : T3.w "q" = q := by
+    simp [hT3, hT2, State.storeW, State.setW, State.charge, hT2q]
+  have hT3cap : G.n + G.m + 2 ≤ T3.cap := hcap
+  -- 4: `pos[p] := q + 1`
+  refine runs_seq (runs_wstore (arr := "pos") (i := .var "p") (e := .add (.var "q") (.lit 1))
+    (j := p) (a := q + 1)
+    (show evalW T3 (.var "p") = some p by rw [evalW_var, hT3p])
+    (show evalW T3 (.add (.var "q") (.lit 1)) = some (q + 1) by
+      rw [evalW_add_of (show evalW T3 (.var "q") = some q by rw [evalW_var, hT3q])
+        (evalW_lit_of (by have := hT3cap; omega)) (by have := hT3cap; omega)])
+    (show p < T3.wlen "pos" by rw [hT3posL]; exact hpL) ?_)
+  set T4 : State ℝ≥0 := (T3.storeW "pos" p (q + 1)).charge 1 with hT4
+  have hT4e : T4.w "e" = k := by
+    simp [hT4, hT3, hT2, hT1, State.storeW, State.setW, State.charge, hwe]
+  have hT4cap : G.n + G.m + 2 ≤ T4.cap := hcap
+  -- 5: `e := e + 1`
+  refine runs_wset (x := "e") (e := .add (.var "e") (.lit 1)) (a := k + 1)
+    (show evalW T4 (.add (.var "e") (.lit 1)) = some (k + 1) by
+      rw [evalW_add_of (show evalW T4 (.var "e") = some k by rw [evalW_var, hT4e])
+        (evalW_lit_of (by have := hT4cap; omega)) (by omega)]) ?_
+  set T5 : State ℝ≥0 := (T4.setW "e" (k + 1)).charge 1 with hT5
+  -- `head` is untouched by every store of this body
+  have hheadT1 : ∀ v, T1.wa "head" v = t.wa "head" v := by
+    intro v; rw [hT1]; simp only [State.setW, State.charge]
+  have hheadT2 : ∀ v, T2.wa "head" v = T1.wa "head" v := by
+    intro v; rw [hT2]; simp only [State.setW, State.charge]
+  have hheadT3 : ∀ v, T3.wa "head" v = T2.wa "head" v := by
+    intro v; rw [hT3]; simp only [State.storeW, State.charge]
+    rw [if_neg (by rintro ⟨h1, -⟩; exact absurd h1 (by decide))]
+  have hheadT4 : ∀ v, T4.wa "head" v = T3.wa "head" v := by
+    intro v; rw [hT4]; simp only [State.storeW, State.charge]
+    rw [if_neg (by rintro ⟨h1, -⟩; exact absurd h1 (by decide))]
+  have hheadT5 : ∀ v, T5.wa "head" v = T4.wa "head" v := by
+    intro v; rw [hT5]; simp only [State.setW, State.charge]
+  have hheadT5' : ∀ v, T5.wa "head" v = t.wa "head" v := fun v =>
+    (hheadT5 v).trans ((hheadT4 v).trans ((hheadT3 v).trans ((hheadT2 v).trans (hheadT1 v))))
+  refine ⟨?_, ?_, ?_, ?_, ?_, ?_⟩
+  · have h1 : AllocFacts G s T1 :=
+      ((A.charge 1).setW "p" (by decide) (by decide) (by decide) p).charge 1
+    have h2 : AllocFacts G s T2 :=
+      (h1.setW "q" (by decide) (by decide) (by decide) q).charge 1
+    have h3 : AllocFacts G s T3 :=
+      (h2.storeW "idx" (by decide) (by decide) (by decide) q k).charge 1
+    have h4 : AllocFacts G s T4 :=
+      (h3.storeW "pos" (by decide) (by decide) (by decide) p (q + 1)).charge 1
+    exact (h4.setW "e" (by decide) (by decide) (by decide) (k + 1)).charge 1
+  · simp [hT5, hT4, hT3, hT2, hT1, State.storeW, State.setW, State.charge]
+  · intro v hv
+    rw [hheadT5' v]
+    exact hheadcnt v hv
+  · intro v hvn
+    have hsuc : srcCnt G v (k + 1) = srcCnt G v k + (if p = v then 1 else 0) := by
+      have h := srcCnt_succ (G := G) (v := v) hkm
+      rw [← hp] at h
+      exact h
+    by_cases hvp : v = p
+    · subst hvp
+      have hT5pos : T5.wa "pos" p = q + 1 := by
+        rw [hT5, hT4]; simp [State.setW, State.storeW, State.charge]
+      have htgt : T5.wa "head" p + srcCnt G p (k + 1) = q + 1 := by
+        rw [hheadT5' p, hsuc, if_pos rfl, hq]
+        omega
+      rw [hT5pos, htgt]
+    · have hpv : p ≠ v := Ne.symm hvp
+      have hT5pos : T5.wa "pos" v = T4.wa "pos" v := by
+        rw [hT5]; simp only [State.setW, State.charge]
+      have hT4pos : T4.wa "pos" v = T3.wa "pos" v := by
+        rw [hT4]; simp only [State.storeW, State.charge]
+        rw [if_neg (by rintro ⟨-, hv⟩; exact hvp hv)]
+      have hT3pos : T3.wa "pos" v = T2.wa "pos" v := by
+        rw [hT3]; simp only [State.storeW, State.charge]
+        rw [if_neg (by rintro ⟨h1, -⟩; exact absurd h1 (by decide))]
+      have hT2pos : T2.wa "pos" v = T1.wa "pos" v := by
+        rw [hT2]; simp only [State.setW, State.charge]
+      have hT1pos : T1.wa "pos" v = t.wa "pos" v := by
+        rw [hT1]; simp only [State.setW, State.charge]
+      rw [hT5pos, hT4pos, hT3pos, hT2pos, hT1pos, hsuc, if_neg hpv, hheadT5' v,
+        hposform v hvn]
+      omega
+  · intro e hek
+    rcases Nat.lt_or_eq_of_le (Nat.lt_succ_iff.mp hek) with hlt | heq
+    · -- a previously placed edge: its slot differs from `q`
+      have hne : t.wa "head" (G.src e) + rank G e ≠ q := by
+        intro hcon
+        have hA : t.wa "head" (G.src e) = cnt G (G.src e : ℕ) :=
+          hheadcnt (G.src e) (by have := (G.src e).isLt; omega)
+        have hB : q = cnt G (G.src ⟨k, hkm⟩ : ℕ) + srcCnt G (G.src ⟨k, hkm⟩ : ℕ) k := by
+          rw [hq, hp,
+            hheadcnt (G.src ⟨k, hkm⟩) (by have := (G.src ⟨k, hkm⟩).isLt; omega)]
+        rw [hA, hB] at hcon
+        exact place_slot_ne (G := G) hkm (e := e) hlt hcon
+      have hstart : T5.wa "idx" (T5.wa "head" (G.src e) + rank G e) =
+          T5.wa "idx" (t.wa "head" (G.src e) + rank G e) := by
+        rw [hheadT5' (G.src e)]
+      have hidxT5 : T5.wa "idx" (t.wa "head" (G.src e) + rank G e) =
+          T4.wa "idx" (t.wa "head" (G.src e) + rank G e) := by
+        rw [hT5]; simp only [State.setW, State.charge]
+      have hidxT4 : T4.wa "idx" (t.wa "head" (G.src e) + rank G e) =
+          T3.wa "idx" (t.wa "head" (G.src e) + rank G e) := by
+        rw [hT4]; simp only [State.storeW, State.charge]
+        rw [if_neg (by rintro ⟨h1, -⟩; exact absurd h1 (by decide))]
+      have hidxT3 : T3.wa "idx" (t.wa "head" (G.src e) + rank G e) =
+          T2.wa "idx" (t.wa "head" (G.src e) + rank G e) := by
+        rw [hT3]; simp only [State.storeW, State.charge]
+        rw [if_neg (by rintro ⟨-, hjk⟩; exact hne hjk)]
+      have hidxT2 : T2.wa "idx" (t.wa "head" (G.src e) + rank G e) =
+          T1.wa "idx" (t.wa "head" (G.src e) + rank G e) := by
+        rw [hT2]; simp only [State.setW, State.charge]
+      have hidxT1 : T1.wa "idx" (t.wa "head" (G.src e) + rank G e) =
+          t.wa "idx" (t.wa "head" (G.src e) + rank G e) := by
+        rw [hT1]; simp only [State.setW, State.charge]
+      rw [hstart, hidxT5, hidxT4, hidxT3, hidxT2, hidxT1]
+      exact hplace e hlt
+    · -- the new edge `k` sits at `q`
+      have hee : e = (⟨k, hkm⟩ : Fin G.m) := Fin.ext heq
+      rw [hee]
+      have hrank : rank G (⟨k, hkm⟩ : Fin G.m) = srcCnt G p k := by
+        rw [rank_eq, hp]
+      have hheadp2 : t.wa "head" p = cnt G (G.src ⟨k, hkm⟩ : ℕ) := by
+        rw [hp, hheadcnt (G.src ⟨k, hkm⟩) (by have := (G.src ⟨k, hkm⟩).isLt; omega)]
+      have hstart : T5.wa "idx" (T5.wa "head" (G.src ⟨k, hkm⟩) + rank G ⟨k, hkm⟩) =
+          T5.wa "idx" q := by
+        rw [hheadT5' (G.src ⟨k, hkm⟩), hrank,
+          hheadcnt (G.src ⟨k, hkm⟩) (by have := (G.src ⟨k, hkm⟩).isLt; omega), hq, hheadp2]
+      have hidxT5 : T5.wa "idx" q = T4.wa "idx" q := by
+        rw [hT5]; simp only [State.setW, State.charge]
+      have hidxT4 : T4.wa "idx" q = T3.wa "idx" q := by
+        rw [hT4]; simp only [State.storeW, State.charge]
+        rw [if_neg (by rintro ⟨h1, -⟩; exact absurd h1 (by decide))]
+      have hidxT3 : T3.wa "idx" q = k := by
+        rw [hT3]; simp only [State.storeW, State.charge]; simp
+      rw [hstart, hidxT5, hidxT4, hidxT3]
+  · have hc : T5.cost = t.cost + 6 := by
+      simp [hT5, hT4, hT3, hT2, hT1, State.storeW, State.setW, State.charge]
+    rw [hc, hcost]; omega
+
+/-- The placement section: `e := 0` then the loop. -/
+theorem runs_placeSection (G : Graph) (s : Fin G.n) (S : State ℝ≥0) (A : AllocFacts G s S)
+    (hheadcnt : ∀ v, v ≤ G.n → S.wa "head" v = cnt G v)
+    (hpos0 : ∀ v, v < G.n → S.wa "pos" v = S.wa "head" v) :
+    Runs realOps (seq (wset "e" (.lit 0)) placeLoop) S
+      (fun S2 => AllocFacts G s S2 ∧ (∀ v, v ≤ G.n → S2.wa "head" v = cnt G v) ∧
+        (∀ e : Fin G.m, S2.wa "idx" (S2.wa "head" (G.src e) + rank G e) = (e : ℕ)) ∧
+        S2.cost = S.cost + 6 * G.m + 2) := by
+  have hcap : G.n + G.m + 2 ≤ S.cap := A.frame.hcap
+  refine runs_seq (runs_wset (x := "e") (e := .lit 0) (a := 0)
+    (evalW_lit_of (by have := hcap; omega)) ?_)
+  set T : State ℝ≥0 := (S.setW "e" 0).charge 1 with hT
+  have hTalloc : AllocFacts G s T := (A.setW "e" (by decide) (by decide) (by decide) 0).charge 1
+  have hTe : T.w "e" = 0 := by simp [hT, State.setW, State.charge]
+  have hTcost : T.cost = S.cost + 1 + 6 * 0 := by
+    simp [hT, State.setW, State.charge] <;> rfl
+  have hThead : ∀ v, v ≤ G.n → T.wa "head" v = cnt G v := by
+    intro v hv; rw [hT]; simp only [State.setW, State.charge]; exact hheadcnt v hv
+  have hTpos : ∀ v, v < G.n → T.wa "pos" v = T.wa "head" v + srcCnt G v 0 := by
+    intro v hv
+    rw [srcCnt_zero]
+    rw [hT]; simp only [State.setW, State.charge]
+    rw [hpos0 v hv]
+    omega
+  have hloop : Runs realOps placeLoop T (fun S2 => AllocFacts G s S2 ∧
+      (∀ v, v ≤ G.n → S2.wa "head" v = cnt G v) ∧
+      (∀ e : Fin G.m, S2.wa "idx" (S2.wa "head" (G.src e) + rank G e) = (e : ℕ)) ∧
+      S2.cost = S.cost + 1 + 6 * G.m + 1) := by
+    refine runs_while (fun k t => PlaceInv G s S k t) G.m _ ?_ ?_ T
+      ⟨hTalloc, hTe, hThead, hTpos, (by intro e he; omega), hTcost⟩
+    · intro k hkm t It
+      have hcap' : G.n + G.m + 2 ≤ t.cap := It.alloc.frame.hcap
+      refine ⟨1, ?_, one_ne_zero, placeBody_runs hkm It⟩
+      rw [evalW_lt_of (evalW_var t "e") (evalW_var t "m") (by have := hcap'; omega),
+        It.we, It.alloc.frame.hm]
+      simp [hkm]
+    · intro t It
+      have hcap' : G.n + G.m + 2 ≤ t.cap := It.alloc.frame.hcap
+      refine ⟨?_, It.alloc.charge 1, It.headcnt, (fun e => It.place e (by have := It.we; omega)),
+        ?_⟩
+      · rw [evalW_lt_of (evalW_var t "e") (evalW_var t "m") (by have := hcap'; omega),
+          It.we, It.alloc.frame.hm]
+        simp
+      · show (t.charge 1).cost = S.cost + 1 + 6 * G.m + 1
+        simp [State.charge, It.cost]
+  obtain ⟨fL, rL, hexL, hAl, hHl, hPl, hCl⟩ := hloop
+  exact ⟨fL, rL, hexL, hAl, hHl, hPl, by rw [hCl]; omega⟩
+
 theorem runs_csr (G : Graph) (s : Fin G.n) :
     Runs realOps (seq allocAll (seq initReach buildCSR)) (initState dijkstraProgram G s)
       (fun st => PreMain G s st ∧ (st.cost : ℝ) ≤ 12 * ((G.n : ℝ) + G.m) + 17) := by
