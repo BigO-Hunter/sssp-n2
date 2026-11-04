@@ -175,7 +175,7 @@ structure CSRPart (G : Graph) (st : State ℝ≥0) : Prop where
   head_mono : ∀ i j, i ≤ j → j ≤ G.n → st.wa "head" i ≤ st.wa "head" j
   head_of_cnt : ∀ v, v ≤ G.n → st.wa "head" v = cnt G v
   csr_seg : ∀ (v : Fin G.n) q, st.wa "head" v ≤ q → q < st.wa "head" ((v : ℕ) + 1) →
-    q < G.m ∧ ∀ hq : q < G.m, G.src ⟨q, hq⟩ = v
+    q < G.m ∧ st.wa "idx" q < G.m ∧ ∀ hq : st.wa "idx" q < G.m, G.src ⟨st.wa "idx" q, hq⟩ = v
   csr_cover : ∀ e : Fin G.m, ∃ q, st.wa "head" (G.src e) ≤ q ∧
     q < st.wa "head" ((G.src e : ℕ) + 1) ∧ st.wa "idx" q = e
 
@@ -204,6 +204,55 @@ structure Inv (G : Graph) (s : Fin G.n) (st : State ℝ≥0) : Prop where
     st.wa "reach" (G.dst e) ≠ 0 ∧
     (st.va "dist" (G.dst e) : ℝ≥0) ≤ st.va "dist" (G.src e) + G.w e
   dist_s_zero : st.va "dist" s = 0
+
+/-! ## Invariance of the structures under the program's state updates -/
+
+theorem CSRPart.setW {G : Graph} {st : State ℝ≥0} (h : CSRPart G st) (x : String) (a : ℕ) :
+    CSRPart G (st.setW x a) := by
+  obtain ⟨h1, h2, h3, h4, h5, h6, h7, h8⟩ := h
+  exact ⟨h1, h2, h3, h4, h5, h6, h7, h8⟩
+
+theorem CSRPart.charge {G : Graph} {st : State ℝ≥0} (h : CSRPart G st) (k : ℕ) :
+    CSRPart G (st.charge k) := by
+  obtain ⟨h1, h2, h3, h4, h5, h6, h7, h8⟩ := h
+  exact ⟨h1, h2, h3, h4, h5, h6, h7, h8⟩
+
+theorem CSRPart.storeW_reach {G : Graph} {st : State ℝ≥0} (h : CSRPart G st) (j a : ℕ) :
+    CSRPart G (st.storeW "reach" j a) := by
+  obtain ⟨h1, h2, h3, h4, h5, h6, h7, h8⟩ := h
+  refine ⟨h1, h2, h3, h4, h5, h6, ?_, ?_⟩
+  · intro v q hq1 hq2
+    obtain ⟨hlt, hidx, hsrc⟩ := h7 v q hq1 hq2
+    refine ⟨hlt, ?_, fun hqq => hsrc hqq⟩
+    simpa [State.storeW] using hidx
+  · intro e
+    obtain ⟨q, hq1, hq2, hq3⟩ := h8 e
+    exact ⟨q, hq1, hq2, by simpa [State.storeW] using hq3⟩
+
+theorem CSRPart.storeV_dist {G : Graph} {st : State ℝ≥0} (h : CSRPart G st) (j : ℕ) (a : ℝ≥0) :
+    CSRPart G (st.storeV "dist" j a) := by
+  obtain ⟨h1, h2, h3, h4, h5, h6, h7, h8⟩ := h
+  exact ⟨h1, h2, h3, h4, h5, h6, h7, h8⟩
+
+theorem Inv.setW {G : Graph} {s : Fin G.n} {st : State ℝ≥0} (I : Inv G s st) (x : String) (a : ℕ)
+    (hxn : x ≠ "n") (hxm : x ≠ "m") : Inv G s (st.setW x a) := by
+  obtain ⟨hfr, hcsr, hrv, hrs, hws, hex, hrel, hds⟩ := I
+  refine ⟨hfr.setW hxn hxm a, hcsr.setW x a, hrv, ?_, ?_, ?_, ?_, hds⟩
+  · intro hzero
+    apply hrs
+    simpa [State.setW, hxn, hxm] using hzero
+  · intro v hv
+    exact hws v (by simpa [State.setW, hxn, hxm] using hv)
+  · intro v hv
+    exact hex v (by simpa [State.setW, hxn, hxm] using hv)
+  · intro e he
+    obtain ⟨h1, h2⟩ := hrel e (by simpa [State.setW, hxn, hxm] using he)
+    exact ⟨by simpa [State.setW, hxn, hxm] using h1, h2⟩
+
+theorem Inv.charge {G : Graph} {s : Fin G.n} {st : State ℝ≥0} (I : Inv G s st) (k : ℕ) :
+    Inv G s (st.charge k) := by
+  obtain ⟨hfr, hcsr, hrv, hrs, hws, hex, hrel, hds⟩ := I
+  exact ⟨hfr.charge k, hcsr.charge k, hrv, hrs, hws, hex, hrel, hds⟩
 
 /-- A freshly built state satisfies the main-loop invariant. -/
 theorem inv_of_preMain {G : Graph} {s : Fin G.n} {st : State ℝ≥0} (h : PreMain G s st) :

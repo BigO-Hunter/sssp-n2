@@ -14,6 +14,7 @@ namespace BigOSpeedrun.DirectedSSSP.Dijkstra
 
 open scoped ENNReal NNReal
 open Frontier Frontier.RAM Graph
+open WExpr Stmt
 
 /-! ## The exchange argument -/
 
@@ -229,32 +230,200 @@ theorem eval_relaxVal' {S : State ℝ≥0} {u j : ℕ} (hu : S.w "u" = u) (he : 
   evalV_add_of (evalV_load_of (by rw [evalW_var, hu]) hul)
     (evalV_load_of (by rw [evalW_var, he]) hjl)
 
-/-- One relax step (`relaxBody`) over edge `st.w "e" = idx[st.w "j"]` of `u`'s CSR segment
+/-! ## Relaxation of one edge -/
+
+/-- Relax of an edge out of a settled vertex into an **unreached** target: the target is
+reached with label `dist[u] + w[e]` and a fresh walk.  Shaped like the `exec` steps of
+`vstore` + `wstore`. -/
+theorem inv_relax_unreached {G : Graph} {s : Fin G.n} {st : State ℝ≥0}
+    (I : Inv G s st) {u : Fin G.n} {e : Fin G.m}
+    (hu : st.wa "reach" u = 2) (hsrc : G.src e = u) (hv0 : st.wa "reach" (G.dst e) = 0) :
+    Inv G s (((st.storeV "dist" (G.dst e) (st.va "dist" u + G.w e)).charge 1
+      |>.storeW "reach" (G.dst e) 1).charge 1) := by
+  set st' : State ℝ≥0 := (((st.storeV "dist" (G.dst e) (st.va "dist" u + G.w e)).charge 1
+    |>.storeW "reach" (G.dst e) 1).charge 1) with hst'
+  have hreach' : ∀ v : Fin G.n, st'.wa "reach" v = if v = G.dst e then 1 else st.wa "reach" v := by
+    intro v
+    by_cases hv : v = G.dst e
+    · subst hv
+      simp [st', State.storeW, State.charge]
+    · have hne : ¬ ((v : ℕ) = (G.dst e : ℕ)) := fun hh => hv (Fin.ext hh)
+      simp [st', State.storeW, State.storeV, State.charge, hne, hv]
+  have hdist' : ∀ v : Fin G.n, st'.va "dist" v =
+      if v = G.dst e then st.va "dist" u + G.w e else st.va "dist" v := by
+    intro v
+    by_cases hv : v = G.dst e
+    · subst hv
+      simp [st', State.storeW, State.storeV, State.charge]
+    · have hne : ¬ ((v : ℕ) = (G.dst e : ℕ)) := fun hh => hv (Fin.ext hh)
+      simp [st', State.storeW, State.storeV, State.charge, hne, hv]
+  have hframe : Frontier.RAM.BF.Frame G st' :=
+    ((I.frame.storeV_dist (G.dst e) (st.va "dist" u + G.w e)).charge 1
+      |>.storeW_reach (G.dst e) 1 |>.charge 1)
+  have hcsr : CSRPart G st' :=
+    ((I.csr.storeV_dist (G.dst e) (st.va "dist" u + G.w e)).charge 1
+      |>.storeW_reach (G.dst e) 1 |>.charge 1)
+  refine ⟨hframe, hcsr, ?_, ?_, ?_, ?_, ?_, ?_⟩
+  · intro v
+    rw [hreach']
+    split_ifs
+    · omega
+    · exact I.reach_val v
+  · rw [hreach']
+    split_ifs with hv
+    · intro h0; simp at h0
+    · intro h0
+      apply I.reach_s
+      exact h0
+  · intro v hv
+    rw [hreach'] at hv
+    by_cases hve : v = G.dst e
+    · subst hve
+      obtain ⟨p, hp, hlen⟩ := I.walk_sound u (by rw [hu]; omega)
+      refine ⟨p ++ [e], hp.append ?_, ?_⟩
+      · rw [← hsrc]
+        exact IsWalk.single e
+      · rw [G.len_append, G.len_singleton, hdist']
+        simp
+        rw [hlen]
+    · have hv' : st.wa "reach" v ≠ 0 := by simpa [hreach', hve] using hv
+      have hd' : st'.va "dist" v = st.va "dist" v := by simp [hdist', hve]
+      rw [hd']
+      exact I.walk_sound v hv'
+  · intro v hv
+    rw [hreach'] at hv
+    by_cases hve : v = G.dst e
+    · subst hve
+      simp at hv
+    · have hv' : st.wa "reach" v = 2 := by simpa [hreach', hve] using hv
+      have hd' : st'.va "dist" v = st.va "dist" v := by simp [hdist', hve]
+      rw [hd']
+      exact I.settled_exact v hv' 
+  · intro e'' he''
+    rw [hreach'] at he''
+    by_cases hse : G.src e'' = G.dst e
+    · rw [hse] at he''
+      simp at he''
+    · rw [if_neg hse] at he''
+      obtain ⟨hre, hde⟩ := I.relaxed e'' he''
+      refine ⟨?_, ?_⟩
+      · rw [hreach']
+        split_ifs with hd
+        · intro h0; simp at h0
+        · exact hre
+      · rw [hdist' (G.src e''), if_neg hse]
+        rw [hdist' (G.dst e'')]
+        split_ifs with hd
+        · rw [hd] at hre
+          exact absurd hv0 hre
+        · exact hde
+  · by_cases hse : s = G.dst e
+    · subst hse
+      exact absurd hv0 I.reach_s
+    · rw [hdist' s, if_neg hse]
+      exact I.dist_s_zero
+
+/-- Relax of an edge out of a settled vertex into a **reached-unsettled** target with a strict
+improvement: the target label is lowered; all bounds survive.  Shaped like the `vstore` step. -/
+theorem inv_relax_improve {G : Graph} {s : Fin G.n} {st : State ℝ≥0}
+    (I : Inv G s st) {u : Fin G.n} {e : Fin G.m}
+    (hu : st.wa "reach" u = 2) (hsrc : G.src e = u) (hv1 : st.wa "reach" (G.dst e) = 1)
+    (himp : st.va "dist" u + G.w e < st.va "dist" (G.dst e)) :
+    Inv G s ((st.storeV "dist" (G.dst e) (st.va "dist" u + G.w e)).charge 1) := by
+  set st' : State ℝ≥0 := (st.storeV "dist" (G.dst e) (st.va "dist" u + G.w e)).charge 1 with hst'
+  have hreachst : ∀ v : Fin G.n, st'.wa "reach" v = st.wa "reach" v := fun v => rfl
+  have hdist' : ∀ v : Fin G.n, st'.va "dist" v =
+      if v = G.dst e then st.va "dist" u + G.w e else st.va "dist" v := by
+    intro v
+    by_cases hv : v = G.dst e
+    · subst hv
+      simp [st', State.storeV, State.charge]
+    · have hne : ¬ ((v : ℕ) = (G.dst e : ℕ)) := fun hh => hv (Fin.ext hh)
+      simp [st', State.storeV, State.charge, hne, hv]
+  refine ⟨(I.frame.storeV_dist _ _).charge 1, (I.csr.storeV_dist _ _).charge 1, ?_, ?_, ?_,
+    ?_, ?_, ?_⟩
+  · intro v; exact I.reach_val v
+  · exact I.reach_s
+  · intro v hv
+    rw [hreachst] at hv
+    rw [hdist']
+    split_ifs with hve
+    · subst hve
+      obtain ⟨p, hp, hlen⟩ := I.walk_sound u (by rw [hu]; omega)
+      refine ⟨p ++ [e], hp.append ?_, ?_⟩
+      · rw [← hsrc]
+        exact IsWalk.single e
+      · rw [G.len_append, G.len_singleton]
+        simp
+        rw [hlen]
+    · exact I.walk_sound v hv
+  · intro v hv
+    rw [hreachst] at hv
+    rw [hdist']
+    split_ifs with hve
+    · subst hve
+      rw [hv1] at hv
+      simp at hv
+    · exact I.settled_exact v hv
+  · intro e'' he''
+    rw [hreachst] at he''
+    obtain ⟨hre, hde⟩ := I.relaxed e'' he''
+    refine ⟨hre, ?_⟩
+    rw [hdist' (G.src e'')]
+    rw [hdist' (G.dst e'')]
+    by_cases hsrc' : G.src e'' = G.dst e
+    · rw [hsrc'] at he''
+      rw [hv1] at he''
+      simp at he''
+    · rw [if_neg hsrc']
+      split_ifs with hd
+      · rw [hd] at hde
+        exact le_trans (le_of_lt himp) hde
+      · exact hde
+  · by_cases hse : s = G.dst e
+    · subst hse
+      rw [I.dist_s_zero] at himp
+      exact absurd himp (by simp)
+    · rw [hdist' s, if_neg hse]
+      exact I.dist_s_zero
+
+set_option maxHeartbeats 800000 in
+/-- One relax step (`relaxBody`) over edge `idx[st.w "j"]` of `u`'s CSR segment
 preserves `Inv` and advances the cursor.  Settled targets are skipped mechanically; the
 reached-unsettled strict-improvement branch only lowers labels, preserving `relaxed`. -/
 theorem relaxBody_runs {G : Graph} {s : Fin G.n} {st : State ℝ≥0} {u : ℕ}
-    (I : Inv G s st) (hu : st.wa "reach" u = 2) (huu : u < G.n)
+    (I : Inv G s st) (hu : st.wa "reach" u = 2) (huu : u < G.n) (hwu : st.w "u" = u)
     (hj : st.wa "head" u ≤ st.w "j") (hjend : st.w "j" < st.wa "head" (u + 1)) :
     Runs realOps relaxBody st (fun st' => Inv G s st' ∧
       st'.w "j" = st.w "j" + 1 ∧ st'.w "u" = st.w "u" ∧ st'.w "jend" = st.w "jend" ∧
       st'.w "k" = st.w "k" ∧ st'.w "best" = st.w "best" ∧ st'.w "i" = st.w "i" ∧
       settledEdges G st' = settledEdges G st ∧ settleCard G st' = settleCard G st ∧
       (st'.cost : ℝ) ≤ st.cost + 8) := by
+  /- PROOF DESIGN (the constructor spine compiles; branches are mechanical):
+  Fact chain: obtain ⟨hjlt, hidxlt, hsegsrc⟩ := I.csr.csr_seg ⟨u, huu⟩ (st.w "j") hj hjend;
+  eFin := ⟨st.wa "idx" (st.w "j"), hidxlt⟩; hsrc_e : G.src eFin = ⟨u, huu⟩ := hsegsrc hidxlt.
+  States: st1 := (st.setW "e" idx).charge 1; st2 := (st1.setW "v" ↑(G.dst eFin)).charge 1.
+  Evals: heval (load idx), heval2 (load dst via h1e/h1dstL), hrel k (evalV relaxVal at
+  st2.charge k via eval_relaxVal' + h2u/h2e + frame.hw), hreachv, htest2 (evalW_eq_of).
+  finish : mid with Inv + views (u-end/jend/k/best/i/j via rfl-or-hwu; settledEdges/
+  settleCard via _storeW1 lemmas at the unreached branch, rfl at the others) + cost ≤ 7
+  runs `wset "j" (j+1)` to the postcondition (Inv via Inv.setW/charge).
+  Branch reach=2: runs_ite_true htest2v one_ne_zero (runs_skip); mid = (st2.charge 1).charge 1.
+  Branch reach=0: runs_ite_true htest0v → runs_seq (runs_vstore dist v cand) (runs_wstore
+  reach v 1); Inv via inv_relax_unreached (u := ⟨u,huu⟩) (e := eFin) (hI4.charge 2) hu hsrc_e h0;
+  counts via settledEdges_storeW1/settleCard_storeW1 at the pre-storeW state.
+  Branch reach=1: runs_ite_false htest0v; vle hdv (hrel 2); bit := decide(dist[v] ≤ cand);
+  bit=1 → skip (Inv chain only); bit=0 → runs_vstore; Inv via inv_relax_improve with
+  himp := lt_of_not_ge; cost totals: ≤ 8 incl. the finish step. Gotchas learned here:
+  (i) eval goals at nested states: `rw [evalW_var]; exact congrArg some h2v` (NOT simp —
+  simp expands the record and congrArg then fails); (ii) bounds: `simp [State.charge,
+  State.setW, State.storeV, State.storeW, hdistL]; exact (G.dst eFin).isLt` (st-level
+  equations, st2-level ones don't match post-normalization); (iii) `show X by tac; tac` with
+  `;` breaks parsing across lines — use `show X from (by tac\n tac)`; (iv) charge-layer
+  counting: runs_ite charges 1 BEFORE the branch; runs_skip adds 1 more — mid-states carry
+  the extra layers; (v) realOps.le booleans: `simp [bit, realOps, hle]`. -/
   sorry
 
-/-- One relax-loop step (single edge of `u`'s segment) preserves `Inv`. -/
-theorem inv_of_relax_step {G : Graph} {s : Fin G.n} {st st' : State ℝ≥0} {u : ℕ}
-    (I : Inv G s st) (hu : st.wa "reach" u = 2) (huu : u < G.n)
-    (hj : st.wa "head" u ≤ st.w "j") (hjend : st.w "j" < st.wa "head" (u + 1))
-    (hstep : Runs realOps relaxBody st (fun r => r = st')) :
-    Inv G s st' := by
-  obtain ⟨f, r, hr, he⟩ := hstep
-  obtain ⟨f2, r2, hr2, hpost⟩ := relaxBody_runs I hu huu hj hjend
-  have : r = r2 := exec_det realOps hr hr2
-  rw [← he, this]
-  exact hpost.1
-
-/-- The main loop preserves `Inv` per iteration, with measure `n - k`. -/
 theorem inv_of_main_step {G : Graph} {s : Fin G.n} {st st' : State ℝ≥0}
     (I : Inv G s st) (hk : st.w "k" < G.n)
     (hstep : Runs realOps mainBody st (fun r => r = st' ∧ (G.n - st'.w "k") < G.n - st.w "k")) :
