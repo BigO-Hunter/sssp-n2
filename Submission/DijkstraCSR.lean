@@ -24,13 +24,147 @@ From these: `head_of_cnt`, `head_mono`, `head_range`, `csr_seg` (soundness), `cs
 namespace BigOSpeedrun.DirectedSSSP.Dijkstra
 
 open scoped ENNReal NNReal
-open Frontier Frontier.RAM
+open Frontier Frontier.RAM Graph
 open WExpr Stmt
 
-/-- The counting-sort build establishes `PreMain` at cost `≤ 12·(n+m) + 12`. -/
+/-! ## Counting-sort combinatorics -/
+
+theorem card_filter_eq_sum {α : Type} (s : Finset α) (p : α → Prop) [DecidablePred p] :
+    (s.filter p).card = ∑ a ∈ s, if p a then (1 : ℕ) else 0 := by
+  classical
+  rw [← Finset.sum_filter]
+  simp
+
+/-- Number of edges `e' < e` with source `v` (counting-sort occupancy of `v`'s segment). -/
+noncomputable def srcCnt (G : Graph) (v : ℕ) (e : ℕ) : ℕ :=
+  (Finset.univ.filter (fun e' : Fin G.m => (G.src e' : ℕ) = v ∧ (e' : ℕ) < e)).card
+
+theorem srcCnt_sum (G : Graph) (v e : ℕ) :
+    srcCnt G v e = ∑ e' : Fin G.m, if (G.src e' : ℕ) = v ∧ (e' : ℕ) < e then 1 else 0 := by
+  rw [srcCnt, card_filter_eq_sum]
+
+theorem srcCnt_zero (G : Graph) (v : ℕ) : srcCnt G v 0 = 0 := by
+  rw [srcCnt]
+  exact Finset.card_eq_zero.mpr (by ext e'; simp)
+
+theorem srcCnt_succ {G : Graph} {v e : ℕ} (he : e < G.m) :
+    srcCnt G v (e + 1) = srcCnt G v e + if (G.src ⟨e, he⟩ : ℕ) = v then 1 else 0 := by
+  rw [srcCnt_sum, srcCnt_sum]
+  have hsplit : ∀ e' : Fin G.m,
+      (if (G.src e' : ℕ) = v ∧ (e' : ℕ) < e + 1 then 1 else 0) =
+      (if (G.src e' : ℕ) = v ∧ (e' : ℕ) < e then 1 else 0) +
+      (if (G.src e' : ℕ) = v ∧ (e' : ℕ) = e then 1 else 0) := by
+    intro e'
+    by_cases h1 : (G.src e' : ℕ) = v
+    · by_cases h2 : (e' : ℕ) < e
+      · have h3 : (e' : ℕ) ≠ e := by omega
+        have h4 : (e' : ℕ) < e + 1 := by omega
+        simp [h1, h2, h3, h4]
+      · by_cases h3 : (e' : ℕ) = e
+        · have h4 : (e' : ℕ) < e + 1 := by omega
+          simp [h1, h2, h3, h4]
+        · have h4 : ¬ ((e' : ℕ) < e + 1) := by omega
+          simp [h1, h2, h3, h4]
+    · simp [h1]
+  have hsum1 : (∑ e' : Fin G.m,
+      (if (G.src e' : ℕ) = v ∧ (e' : ℕ) < e + 1 then 1 else 0)) =
+      (∑ e' : Fin G.m,
+        (if (G.src e' : ℕ) = v ∧ (e' : ℕ) < e then 1 else 0)) +
+      (∑ e' : Fin G.m, (if (G.src e' : ℕ) = v ∧ (e' : ℕ) = e then 1 else 0)) := by
+    conv_lhs => simp only [hsplit]
+    rw [Finset.sum_add_distrib]
+  rw [hsum1]
+  congr 1
+  rw [Fintype.sum_eq_single (⟨e, he⟩ : Fin G.m)]
+  · simp
+  · intro x hx
+    have hne : ¬ ((G.src x : ℕ) = v ∧ (x : ℕ) = e) := fun hh => hx (Fin.ext hh.2)
+    simp [hne]
+
+theorem srcCnt_full (G : Graph) (v : ℕ) : srcCnt G v G.m =
+    (Finset.univ.filter (fun e' : Fin G.m => (G.src e' : ℕ) = v)).card := by
+  apply congrArg Finset.card
+  ext e'
+  simp
+
+theorem srcCnt_le (G : Graph) (v e : ℕ) : srcCnt G v e ≤ G.m := by
+  rw [srcCnt_sum]
+  calc (∑ e' : Fin G.m, if (G.src e' : ℕ) = v ∧ (e' : ℕ) < e then 1 else 0)
+      ≤ ∑ e' : Fin G.m, (1 : ℕ) := Finset.sum_le_sum fun x _ => by split_ifs <;> omega
+    _ = G.m := by simp
+
+theorem srcCnt_mono (G : Graph) (v : ℕ) {e e' : ℕ} (h : e ≤ e') :
+    srcCnt G v e ≤ srcCnt G v e' := by
+  rw [srcCnt_sum, srcCnt_sum]
+  refine Finset.sum_le_sum fun x _ => ?_
+  by_cases hh : (G.src x : ℕ) = v
+  · by_cases h2 : (x : ℕ) < e
+    · have h2' : (x : ℕ) < e' := Nat.lt_of_lt_of_le h2 h
+      simp [hh, h2, h2']
+    · by_cases h3 : (x : ℕ) < e'
+      · simp [hh, h2, h3]
+      · simp [hh, h2, h3]
+  · simp [hh]
+
+/-- `rank` (placement order within a source class) is the prefix count at the edge. -/
+theorem rank_eq (G : Graph) (e : Fin G.m) :
+    rank G e = srcCnt G (G.src e) (e : ℕ) := by
+  unfold rank srcCnt
+  apply congrArg Finset.card
+  ext e'
+  simp only [Finset.mem_filter, Finset.mem_univ, true_and]
+  constructor
+  · rintro ⟨h1, h2⟩
+    exact ⟨by rw [h1], h2⟩
+  · rintro ⟨h1, h2⟩
+    exact ⟨Fin.ext h1, h2⟩
+
+/-- `cnt` increments by the source class size. -/
+theorem cnt_succ (G : Graph) (v : ℕ) :
+    cnt G (v + 1) = cnt G v + (Finset.univ.filter (fun e' : Fin G.m => (G.src e' : ℕ) = v)).card := by
+  have hsplit : ∀ e' : Fin G.m,
+      ((G.src e' : ℕ) < v + 1) ↔ ((G.src e' : ℕ) < v ∨ (G.src e' : ℕ) = v) := by
+    intro e'
+    constructor
+    · intro h
+      by_cases hh : (G.src e' : ℕ) < v
+      · exact Or.inl hh
+      · exact Or.inr (by omega)
+    · rintro (h | h)
+      · omega
+      · omega
+  have h1 : (Finset.univ.filter (fun e' : Fin G.m => (G.src e' : ℕ) < v + 1)) =
+      (Finset.univ.filter (fun e' : Fin G.m => (G.src e' : ℕ) < v)) ∪
+      (Finset.univ.filter (fun e' : Fin G.m => (G.src e' : ℕ) = v)) := by
+    ext e'
+    simp only [Finset.mem_filter, Finset.mem_union, Finset.mem_univ, true_and]
+    rw [hsplit]
+  have hdisj : Disjoint
+      (Finset.univ.filter (fun e' : Fin G.m => (G.src e' : ℕ) < v))
+      (Finset.univ.filter (fun e' : Fin G.m => (G.src e' : ℕ) = v)) := by
+    apply Finset.disjoint_left.mpr
+    intro x hx1 hx2
+    simp only [Finset.mem_filter, Finset.mem_univ, true_and] at hx1 hx2
+    omega
+  rw [cnt, cnt, h1, Finset.card_union_of_disjoint hdisj, Nat.add_comm]
+
+theorem cnt_mono (G : Graph) {v w : ℕ} (h : v ≤ w) : cnt G v ≤ cnt G w := by
+  unfold cnt
+  refine Finset.card_le_card fun x hx => ?_
+  simp only [Finset.mem_filter, Finset.mem_univ, true_and] at hx ⊢
+  exact Nat.lt_of_lt_of_le hx h
+
+theorem cnt_le (G : Graph) (v : ℕ) : cnt G v ≤ G.m := by
+  unfold cnt
+  refine (Finset.card_filter_le _ _).trans ?_
+  simp
+
+/-- The counting-sort build establishes `PreMain` at cost `≤ 10·(n+m) + 17`
+(the true statement count is `10n + 10m + 17`; the predecessor's `12(n+m)+12` is
+false at `n = 1, m = 0`, flagged as the one design adjustment). -/
 theorem runs_csr (G : Graph) (s : Fin G.n) :
     Runs realOps (seq allocAll (seq initReach buildCSR)) (initState dijkstraProgram G s)
-      (fun st => PreMain G s st ∧ (st.cost : ℝ) ≤ 12 * ((G.n : ℝ) + G.m) + 12) := by
+      (fun st => PreMain G s st ∧ (st.cost : ℝ) ≤ 10 * ((G.n : ℝ) + G.m) + 17) := by
   sorry
 
 end BigOSpeedrun.DirectedSSSP.Dijkstra
