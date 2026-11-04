@@ -1031,7 +1031,80 @@ theorem sweep_relaxLoop_runs {G : Graph} {s : Fin G.n} {st : State ℝ≥0} {u :
       settledEdges G st' = settledEdges G st ∧ settleCard G st' = settleCard G st ∧
       (st'.cost : ℝ) ≤ st.cost + 9 * (st.wa "head" (u + 1) - st.wa "head" u) + 1 ∧
       st'.wa "reach" u = 2 ∧ ∀ v : ℕ, st'.wa "head" v = st.wa "head" v) := by
-  sorry
+  have hmono : st.wa "head" u ≤ st.wa "head" (u + 1) :=
+    S.csr.head_mono u (u + 1) (by omega) (by omega)
+  set J : ℕ → State ℝ≥0 → Prop := fun k t => SweepInv G s u t ∧
+      t.w "j" = st.wa "head" u + k ∧ t.w "u" = st.w "u" ∧ t.w "jend" = st.w "jend" ∧
+      t.w "k" = st.w "k" ∧ t.w "best" = st.w "best" ∧ t.w "i" = st.w "i" ∧
+      settledEdges G t = settledEdges G st ∧ settleCard G t = settleCard G st ∧
+      t.cost ≤ st.cost + 9 * k ∧ t.wa "reach" u = 2 ∧
+      (∀ v : ℕ, t.wa "head" v = st.wa "head" v) with hJ
+  have step : ∀ k < (st.wa "head" (u + 1) - st.wa "head" u), ∀ t, J k t →
+      ∃ x, evalW t (.lt (.var "j") (.var "jend")) = some x ∧ x ≠ 0 ∧
+        Runs realOps relaxBody (t.charge 1) (J (k + 1)) := by
+    intro k hk t Jt
+    obtain ⟨It, hjt, hut, hjet, hkt, hbt, hit, hset, hsct, hct, hrt, hhead⟩ := Jt
+    have hjlt : t.w "j" < t.w "jend" := by
+      rw [hjt, hjet, hjend]
+      omega
+    refine ⟨1, ?_, one_ne_zero, ?_⟩
+    · rw [evalW_lt_of (evalW_var t "j") (evalW_var t "jend")
+        (by have := It.frame.hcap; omega), if_pos hjlt]
+    · refine Runs.mono (sweep_relaxBody_runs (S := It.charge 1) (u := u) huu
+        (hut.trans hwu)
+        (by show t.wa "head" u ≤ t.w "j"; rw [hhead u, hjt]; omega)
+        (by show t.w "j" < t.wa "head" (u + 1); rw [hjt, hhead (u + 1)]; omega)) ?_
+      rintro t' ⟨Iv, hju, hu2, hje2, hkb2, hbst2, hin2, hse2, hsc2, hc2, hru2, hhh2⟩
+      refine ⟨Iv, ?_, hu2.trans hut, hje2.trans hjet, hkb2.trans hkt, hbst2.trans hbt,
+        hin2.trans hit, hse2.trans hset, hsc2.trans hsct, ?_, hru2, ?_⟩
+      · have h1 := hju
+        simp only [State.charge] at h1
+        omega
+      · have h1 : t'.cost ≤ t.cost + 9 := by
+          have h := hc2
+          simp [State.charge] at h
+          exact_mod_cast h
+        omega
+      · intro v
+        exact (hhh2 v).trans (hhead v)
+  have exit : ∀ t, J (st.wa "head" (u + 1) - st.wa "head" u) t →
+      evalW t (.lt (.var "j") (.var "jend")) = some 0 ∧
+      (fun st' => SweepInv G s u st' ∧
+        st'.w "j" = st.wa "head" (u + 1) ∧ st'.w "u" = st.w "u" ∧ st'.w "jend" = st.w "jend" ∧
+        st'.w "k" = st.w "k" ∧ st'.w "best" = st.w "best" ∧ st'.w "i" = st.w "i" ∧
+        settledEdges G st' = settledEdges G st ∧ settleCard G st' = settleCard G st ∧
+        (st'.cost : ℝ) ≤ st.cost + 9 * (st.wa "head" (u + 1) - st.wa "head" u) + 1 ∧
+        st'.wa "reach" u = 2 ∧ ∀ v : ℕ, st'.wa "head" v = st.wa "head" v) (t.charge 1) := by
+    intro t Jt
+    obtain ⟨It, hjt, hut, hjet, hkt, hbt, hit, hset, hsct, hct, hrt, hhead⟩ := Jt
+    have hje : t.w "j" = t.w "jend" := by
+      rw [hjt, hjet, hjend]
+      omega
+    constructor
+    · rw [evalW_lt_of (evalW_var t "j") (evalW_var t "jend")
+        (by have := It.frame.hcap; omega), if_neg (by omega)]
+    · refine ⟨It.charge 1, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+      · show t.w "j" = st.wa "head" (u + 1)
+        rw [hjt]
+        omega
+      · simp [State.charge, hut]
+      · simp [State.charge, hjet]
+      · simp [State.charge, hkt]
+      · simp [State.charge, hbt]
+      · simp [State.charge, hit]
+      · show settledEdges G t = settledEdges G st
+        exact hset
+      · show settleCard G t = settleCard G st
+        exact hsct
+      · simp [State.charge]
+        exact_mod_cast hct
+      · exact hrt
+      · intro v; exact hhead v
+  refine runs_while J (st.wa "head" (u + 1) - st.wa "head" u) _ step exit st ?_
+  refine ⟨S, ?_, rfl, rfl, rfl, rfl, rfl, rfl, rfl, ?_, S.reach_u, fun v => rfl⟩
+  · rw [hj0]
+    omega
+  · omega
 
 /-- One settle step in full: `settleBody` from an `Inv` state settles its scan winner `u`
 exactly (exchange = `min_settled_exact`) and sweeps its out-edges (`sweep_relaxLoop_runs`),
