@@ -507,6 +507,233 @@ byte-identical to the `relaxed` field proof in `inv_relax_unreached`/`inv_relax_
 `u` can point at it vacuously — exactly the `hse` case-split there). -/
 
 set_option maxHeartbeats 800000 in
+/-- Sweep variant of `inv_relax_unreached` (cursor unchanged): the written vertex `v`
+was unreached, so no already-swept `u`-edge and no reach-2 source `≠ u` targets it —
+both kinds of obligation already assert their target's `reach ≠ 0`.  The two `relaxed`
+fields are therefore unchanged apart from the fresh `EdgeRelaxed e`, which
+`SweepInv.advance` consumes at the tail of `relaxBody`. -/
+theorem sweep_inv_relax_unreached {G : Graph} {s : Fin G.n} {st : State ℝ≥0} {u : ℕ}
+    (SW : SweepInv G s u st) {e : Fin G.m} (hsrc : (G.src e : ℕ) = u)
+    (hv0 : st.wa "reach" (G.dst e) = 0) :
+    SweepInv G s u ((((st.storeV "dist" (G.dst e) (st.va "dist" u + G.w e)).charge 1)
+      |>.storeW "reach" (G.dst e) 1).charge 1) := by
+  set st' : State ℝ≥0 := ((((st.storeV "dist" (G.dst e) (st.va "dist" u + G.w e)).charge 1)
+    |>.storeW "reach" (G.dst e) 1).charge 1) with hst'
+  have hreach' : ∀ v : Fin G.n, st'.wa "reach" v = if v = G.dst e then 1 else st.wa "reach" v := by
+    intro v
+    by_cases hv : v = G.dst e
+    · subst hv
+      simp [st', State.storeW, State.charge]
+    · have hne : ¬ ((v : ℕ) = (G.dst e : ℕ)) := fun hh => hv (Fin.ext hh)
+      simp [st', State.storeW, State.storeV, State.charge, hne, hv]
+  have hdist' : ∀ v : Fin G.n, st'.va "dist" v =
+      if v = G.dst e then st.va "dist" u + G.w e else st.va "dist" v := by
+    intro v
+    by_cases hv : v = G.dst e
+    · subst hv
+      simp [st', State.storeW, State.storeV, State.charge]
+    · have hne : ¬ ((v : ℕ) = (G.dst e : ℕ)) := fun hh => hv (Fin.ext hh)
+      simp [st', State.storeW, State.storeV, State.charge, hne, hv]
+  have hune : u ≠ (G.dst e : ℕ) := by
+    intro hh
+    rw [← hh] at hv0
+    have h2 := SW.reach_u
+    omega
+  have hru : st'.wa "reach" u = st.wa "reach" u := by
+    simp [st', State.storeW, State.storeV, State.charge, hune]
+  have hdu : st'.va "dist" u = st.va "dist" u := by
+    simp [st', State.storeW, State.storeV, State.charge, hune]
+  refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+  · exact ((SW.frame.storeV_dist (G.dst e) (st.va "dist" u + G.w e)).charge 1
+      |>.storeW_reach (G.dst e) 1 |>.charge 1)
+  · exact ((SW.csr.storeV_dist (G.dst e) (st.va "dist" u + G.w e)).charge 1
+      |>.storeW_reach (G.dst e) 1 |>.charge 1)
+  · intro v
+    rw [hreach']
+    split_ifs
+    · omega
+    · exact SW.reach_val v
+  · rw [hreach']
+    split_ifs with hv
+    · intro h0; simp at h0
+    · exact SW.reach_s
+  · rw [hru]
+    exact SW.reach_u
+  · exact SW.cursor_ge
+  · exact SW.cursor_le
+  · intro v hv
+    rw [hreach'] at hv
+    by_cases hve : v = G.dst e
+    · subst hve
+      obtain ⟨p, hp, hlen⟩ := SW.walk_sound (G.src e) (by
+        rw [hsrc] at ⊢
+        have := SW.reach_u
+        omega)
+      refine ⟨p ++ [e], hp.append (IsWalk.single e), ?_⟩
+      have hlen' : G.len p = st.va "dist" u := by
+        rw [hlen]
+        exact congrArg (st.va "dist") hsrc
+      rw [G.len_append, G.len_singleton, hlen']
+      simp [st', State.storeW, State.storeV, State.charge]
+    · have hv' : st.wa "reach" v ≠ 0 := by simpa [hreach', hve] using hv
+      have hd' : st'.va "dist" v = st.va "dist" v := by simp [hdist', hve]
+      rw [hd']
+      exact SW.walk_sound v hv'
+  · intro v hv
+    rw [hreach'] at hv
+    by_cases hve : v = G.dst e
+    · subst hve
+      simp at hv
+    · have hv' : st.wa "reach" v = 2 := by simpa [hreach', hve] using hv
+      have hd' : st'.va "dist" v = st.va "dist" v := by simp [hdist', hve]
+      rw [hd']
+      exact SW.settled_exact v hv'
+  · -- relaxed_other: the written vertex cannot be targeted by a reach-2 source ≠ u,
+    -- since that obligation already forced its target's reach away from 0
+    intro e'' hne_u he''
+    rw [hreach'] at he''
+    by_cases hse : G.src e'' = G.dst e
+    · rw [hse] at he''
+      simp at he''
+    · rw [if_neg hse] at he''
+      obtain ⟨hre, hde⟩ := SW.relaxed_other e'' hne_u he''
+      refine ⟨?_, ?_⟩
+      · rw [hreach']
+        split_ifs with hd
+        · intro h0; simp at h0
+        · exact hre
+      · rw [hdist' (G.src e''), if_neg hse]
+        rw [hdist' (G.dst e'')]
+        split_ifs with hd
+        · rw [hd] at hre
+          exact absurd hv0 hre
+        · exact hde
+  · -- relaxed_swept: old swept targets were never the unreached vertex
+    intro q h1 h2 hq hidx
+    obtain ⟨hre, hde⟩ := SW.relaxed_swept q h1 h2 hq hidx
+    refine ⟨?_, ?_⟩
+    · show st'.wa "reach" (G.dst ⟨st.wa "idx" q, hidx⟩) ≠ 0
+      rw [hreach']
+      by_cases hd : G.dst ⟨st.wa "idx" q, hidx⟩ = G.dst e
+      · rw [hd] at hre
+        exact absurd hv0 hre
+      · rw [if_neg hd]
+        exact hre
+    · show (st'.va "dist" (G.dst ⟨st.wa "idx" q, hidx⟩) : ℝ≥0) ≤
+        st'.va "dist" u + G.w ⟨st.wa "idx" q, hidx⟩
+      rw [hdist' (G.dst ⟨st.wa "idx" q, hidx⟩)]
+      by_cases hd : G.dst ⟨st.wa "idx" q, hidx⟩ = G.dst e
+      · rw [hd] at hre
+        exact absurd hv0 hre
+      · rw [if_neg hd, hdu]
+        exact hde
+  · rw [hdist' s]
+    by_cases hse : (s : Fin G.n) = G.dst e
+    · rw [if_pos hse]
+      rw [← hse] at hv0
+      exact absurd hv0 SW.reach_s
+    · rw [if_neg hse]
+      exact SW.dist_s_zero
+
+/-- Sweep variant of `inv_relax_improve` (cursor unchanged): the strict-improvement
+write only lowers the reached-unsettled target's label, so both `relaxed` fields
+survive (every bound is monotone in the lowered label) and the fresh `EdgeRelaxed e`
+holds with equality. -/
+theorem sweep_inv_relax_improve {G : Graph} {s : Fin G.n} {st : State ℝ≥0} {u : ℕ}
+    (SW : SweepInv G s u st) {e : Fin G.m} (hsrc : (G.src e : ℕ) = u)
+    (hv1 : st.wa "reach" (G.dst e) = 1)
+    (himp : st.va "dist" u + G.w e < st.va "dist" (G.dst e)) :
+    SweepInv G s u ((st.storeV "dist" (G.dst e) (st.va "dist" u + G.w e)).charge 1) := by
+  set st' : State ℝ≥0 := (st.storeV "dist" (G.dst e) (st.va "dist" u + G.w e)).charge 1 with hst'
+  have hreachst : ∀ v : Fin G.n, st'.wa "reach" v = st.wa "reach" v := fun v => rfl
+  have hdist' : ∀ v : Fin G.n, st'.va "dist" v =
+      if v = G.dst e then st.va "dist" u + G.w e else st.va "dist" v := by
+    intro v
+    by_cases hv : v = G.dst e
+    · subst hv
+      simp [st', State.storeV, State.charge]
+    · have hne : ¬ ((v : ℕ) = (G.dst e : ℕ)) := fun hh => hv (Fin.ext hh)
+      simp [st', State.storeV, State.charge, hne, hv]
+  have hune : u ≠ (G.dst e : ℕ) := by
+    intro hh
+    rw [← hh] at hv1
+    have h2 := SW.reach_u
+    omega
+  have hdu : st'.va "dist" u = st.va "dist" u := by
+    simp [st', State.storeV, State.charge, hune]
+  refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+  · exact (SW.frame.storeV_dist (G.dst e) (st.va "dist" u + G.w e)).charge 1
+  · exact (SW.csr.storeV_dist (G.dst e) (st.va "dist" u + G.w e)).charge 1
+  · intro v
+    rw [hreachst]
+    exact SW.reach_val v
+  · rw [hreachst]
+    exact SW.reach_s
+  · show st.wa "reach" u = 2
+    exact SW.reach_u
+  · exact SW.cursor_ge
+  · exact SW.cursor_le
+  · intro v hv
+    rw [hreachst] at hv
+    rw [hdist']
+    split_ifs with hve
+    · subst hve
+      obtain ⟨p, hp, hlen⟩ := SW.walk_sound (G.src e) (by
+        rw [hsrc] at ⊢
+        have := SW.reach_u
+        omega)
+      refine ⟨p ++ [e], hp.append (IsWalk.single e), ?_⟩
+      have hlen' : G.len p = st.va "dist" u := by
+        rw [hlen]
+        exact congrArg (st.va "dist") hsrc
+      rw [G.len_append, G.len_singleton, hlen']
+    · exact SW.walk_sound v hv
+  · intro v hv
+    rw [hreachst] at hv
+    rw [hdist']
+    split_ifs with hve
+    · subst hve
+      rw [hv1] at hv
+      simp at hv
+    · exact SW.settled_exact v hv
+  · -- relaxed_other: labels only lower, reach unchanged
+    intro e'' hne_u he''
+    rw [hreachst] at he''
+    obtain ⟨hre, hde⟩ := SW.relaxed_other e'' hne_u he''
+    refine ⟨hre, ?_⟩
+    rw [hdist' (G.src e'')]
+    rw [hdist' (G.dst e'')]
+    by_cases hsrc' : G.src e'' = G.dst e
+    · rw [hsrc'] at he''
+      rw [hv1] at he''
+      simp at he''
+    · rw [if_neg hsrc']
+      split_ifs with hd
+      · rw [hd] at hde
+        exact le_trans (le_of_lt himp) hde
+      · exact hde
+  · -- relaxed_swept: the lowered label keeps every old swept bound
+    intro q h1 h2 hq hidx
+    obtain ⟨hre, hde⟩ := SW.relaxed_swept q h1 h2 hq hidx
+    refine ⟨hre, ?_⟩
+    show (st'.va "dist" (G.dst ⟨st.wa "idx" q, hidx⟩) : ℝ≥0) ≤
+      st'.va "dist" u + G.w ⟨st.wa "idx" q, hidx⟩
+    rw [hdist' (G.dst ⟨st.wa "idx" q, hidx⟩)]
+    by_cases hd : G.dst ⟨st.wa "idx" q, hidx⟩ = G.dst e
+    · rw [hd] at hde
+      rw [if_pos hd, hdu]
+      exact le_trans (le_of_lt himp) hde
+    · rw [if_neg hd, hdu]
+      exact hde
+  · rw [hdist' s]
+    by_cases hse : (s : Fin G.n) = G.dst e
+    · subst hse
+      rw [SW.dist_s_zero] at himp
+      exact absurd himp (by simp)
+    · rw [if_neg hse]
+      exact SW.dist_s_zero
+
+set_option maxHeartbeats 800000 in
 /-- Sweep variant of one relax step (`relaxBody`) over edge `idx[st.w "j"]`: preserves
 `SweepInv` and advances the cursor.  DESIGN: identical spine to `relaxBody_runs` below
 (h2v2 settled-target skip / h0v unreached write / else compare-branch), with
