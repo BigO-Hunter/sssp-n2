@@ -684,6 +684,38 @@ theorem relaxLoop_runs {G : Graph} {s : Fin G.n} {st : State ℝ≥0} {u : ℕ}
     omega
   · omega
 
+/-! ## The min-scan (independent of the relax sweep — `minBody` never relaxes edges) -/
+
+/-- Prefix form of `ScanPost`: `b` is the argmin over `reach = 1` vertices in the scanned
+prefix `[0, k)`, or the `n` sentinel if the prefix holds none. -/
+def ScanPrefix (G : Graph) (st : State ℝ≥0) (b k : ℕ) : Prop :=
+  (b = G.n ∧ ∀ v : Fin G.n, (v : ℕ) < k → st.wa "reach" v = 1 → False) ∨
+  (b < G.n ∧ (b : ℕ) < k ∧ st.wa "reach" b = 1 ∧
+    ∀ v : Fin G.n, (v : ℕ) < k → st.wa "reach" v = 1 → (st.va "dist" b : ℝ≥0) ≤ st.va "dist" v)
+
+theorem scanPrefix_full {G : Graph} {st : State ℝ≥0} {b : ℕ}
+    (h : ScanPrefix G st b G.n) : ScanPost G st b := by
+  rcases h with ⟨hb, hall⟩ | ⟨hbl, hbk, hbr, hle⟩
+  · exact Or.inl ⟨hb, fun v hv => hall v v.isLt hv⟩
+  · exact Or.inr ⟨hbl, hbr, fun v hv => hle v v.isLt hv⟩
+
+/-- The min-scan: from `best = n`, `i = 0`, `minLoop` runs `n` counted steps; at exit `best`
+is the argmin over `reach = 1` (or the `n` sentinel) — `ScanPost`.  Cost `≤ 9·n + 1`.
+`minBody` writes only `i`/`best`/`c`, so `Inv` survives by `Inv.setW`.  FILL (per the
+`relaxLoop_runs` counted-while pattern): invariant `J k t` = `Inv` ∧ `t.w "i" = k` ∧
+`ScanPrefix G t (t.w "best") k` ∧ `u/j/jend/k`/`settled/card`/`head` unchanged ∧ `cost ≤
+st.cost + 9*k`; step evaluates `i < n` (`evalW_lt_of` + `frame.hn`) and runs `minBody`, the
+`ScanPrefix` argmin maintenance being the `reach k = 1` / `best = n` / `dist k ≤ dist best`
+case split; exit uses `scanPrefix_full`; init is the sentinel disjunct. -/
+theorem minLoop_runs {G : Graph} {s : Fin G.n} {st : State ℝ≥0}
+    (I : Inv G s st) (hbest : st.w "best" = G.n) (hi0 : st.w "i" = 0) :
+    Runs realOps minLoop st (fun st' => Inv G s st' ∧ ScanPost G st' (st'.w "best") ∧
+      st'.w "u" = st.w "u" ∧ st'.w "j" = st.w "j" ∧ st'.w "jend" = st.w "jend" ∧
+      st'.w "k" = st.w "k" ∧ settledEdges G st' = settledEdges G st ∧
+      settleCard G st' = settleCard G st ∧ (st'.cost : ℝ) ≤ st.cost + 9 * G.n + 1 ∧
+      ∀ v : ℕ, st'.wa "head" v = st.wa "head" v) := by
+  sorry
+
 theorem inv_of_main_step {G : Graph} {s : Fin G.n} {st st' : State ℝ≥0}
     (I : Inv G s st) (hk : st.w "k" < G.n)
     (hstep : Runs realOps mainBody st (fun r => r = st' ∧ (G.n - st'.w "k") < G.n - st.w "k")) :
