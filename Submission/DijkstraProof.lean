@@ -1617,7 +1617,12 @@ theorem inv_of_settle {G : Graph} {s : Fin G.n} {st st' : State ℝ≥0} {u : Fi
     (hmin : ∀ v : Fin G.n, st.wa "reach" v = 1 → (st.va "dist" u : ℝ≥0) ≤ st.va "dist" v)
     (hstep : Runs realOps settleBody st (fun r => r = st')) :
     Inv G s st' ∧ st'.wa "reach" u = 2 := by
-  sorry
+  obtain ⟨f1, r1, hex1, hq1⟩ := settleBody_runs I hu hbest u.isLt hmin
+  obtain ⟨f2, r2, hex2, hq2⟩ := hstep
+  have hsame : r1 = r2 := exec_det realOps hex1 hex2
+  rw [← hsame] at hq2
+  rw [hq2] at hq1
+  exact ⟨hq1.1, hq1.2.1⟩
 
 /-- At exit (no `reach = 1` vertices) reachability propagates along walks from a reached
 vertex: every walk step leaves a settled vertex, whose relaxations reached the next. -/
