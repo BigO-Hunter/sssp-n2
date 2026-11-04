@@ -159,12 +159,19 @@ theorem cnt_le (G : Graph) (v : ℕ) : cnt G v ≤ G.m := by
   refine (Finset.card_filter_le _ _).trans ?_
   simp
 
-/-- The counting-sort build establishes `PreMain` at cost `≤ 10·(n+m) + 17`
-(the true statement count is `10n + 10m + 17`; the predecessor's `12(n+m)+12` is
-false at `n = 1, m = 0`, flagged as the one design adjustment). -/
+/-- The counting-sort build establishes `PreMain` at cost `≤ 12·(n+m) + 17`.
+
+True per-phase counts against the cost model (`1` per statement and test, `alloc k = k+1`):
+`allocAll = 4n+m+6` (five allocs of sizes `n+1, n, m, n, n`), `initReach = 4m+3`
+(`wstore; wset; countLoop` = `2 + m·(1+3) + 1`), `buildCSR = 8n+6m+8`
+(`wset;wset; prefixLoop; wstore; wset; copyLoop; wset; placeLoop` = `2 + (5n+1) + 1 + 1 +
+(3n+1) + 1 + (6m+1)`).  Total `12n + 11m + 17`.  BOTH earlier claimed bounds are false at
+`n = 1, m = 0` (true cost `29`): the original `12(n+m)+12` and the session-2 "correction"
+`10(n+m)+17` (its claimed true count `10n+10m+17` dropped the `n+1` in `walloc "head"`,
+one loop exit test, and one prologue `wset`). -/
 theorem runs_csr (G : Graph) (s : Fin G.n) :
     Runs realOps (seq allocAll (seq initReach buildCSR)) (initState dijkstraProgram G s)
-      (fun st => PreMain G s st ∧ (st.cost : ℝ) ≤ 10 * ((G.n : ℝ) + G.m) + 17) := by
+      (fun st => PreMain G s st ∧ (st.cost : ℝ) ≤ 12 * ((G.n : ℝ) + G.m) + 17) := by
   sorry
 
 end BigOSpeedrun.DirectedSSSP.Dijkstra

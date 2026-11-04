@@ -1874,11 +1874,162 @@ theorem minLoop_runs {G : Graph} {s : Fin G.n} {st : State ℝ≥0}
       omega
   · omega
 
+theorem cnt_step_srcCnt (G : Graph) (v : ℕ) : cnt G v + srcCnt G v G.m = cnt G (v + 1) := by
+  rw [cnt_succ, ← srcCnt_full]
+
+theorem settleCard_eq_top {G : Graph} {st : State ℝ≥0} (h : settleCard G st = G.n) :
+    ∀ v : Fin G.n, st.wa "reach" v = 2 := by
+  intro v
+  by_contra hne
+  unfold settleCard at h
+  rw [card_filter_eq_sum] at h
+  have hone : (∑ w : Fin G.n, (1:ℕ)) = G.n := by simp
+  have hlt : (∑ w : Fin G.n, if st.wa "reach" w = 2 then (1:ℕ) else 0) <
+      (∑ w : Fin G.n, (1:ℕ)) := by
+    refine Finset.sum_lt_sum (fun w _ => by split_ifs <;> omega) ⟨v, Finset.mem_univ _, ?_⟩
+    rw [if_neg hne]
+    omega
+  rw [h, hone] at hlt
+  omega
+
+/-- One full main iteration: rescan for the argmin, then either settle it (`k := k + 1`,
+`settleCard +1`, the sweep relaxing its out-edges, `settledEdges + srcCnt`) or — when no
+`reach = 1` vertex remains — write the exit sentinel `k := n` with the reach array frozen. -/
+theorem mainBody_runs {G : Graph} {s : Fin G.n} {st : State ℝ≥0} (I : Inv G s st)
+    (hk : st.w "k" < G.n) :
+    Runs realOps mainBody st (fun st' => Inv G s st' ∧
+      G.n - st'.w "k" < G.n - st.w "k" ∧
+      ((st'.w "k" = G.n ∧ (∀ v : Fin G.n, st'.wa "reach" v ≠ 1) ∧
+          settledEdges G st' = settledEdges G st ∧ settleCard G st' = settleCard G st) ∨
+        ∃ u : Fin G.n, st'.w "k" = st.w "k" + 1 ∧
+          settleCard G st' = settleCard G st + 1 ∧
+          settledEdges G st' = settledEdges G st + srcCnt G u G.m) ∧
+      (st'.cost : ℝ) ≤ st.cost + (9 * G.n + 13) +
+        9 * (settledEdges G st' - settledEdges G st)) := by
+  have hcap : G.n + G.m + 2 ≤ st.cap := I.frame.hcap
+  have hn : 0 < G.n := by have := s.isLt; omega
+  refine runs_seq ?_
+  refine runs_wset (a := G.n) (by rw [evalW_var, I.frame.hn]) ?_
+  refine runs_seq ?_
+  have hcap1 : 0 < ((st.setW "best" G.n).charge 1).cap := by
+    have h2 : 0 < st.cap := by omega
+    exact h2
+  refine runs_wset (a := 0) (evalW_lit_of hcap1) ?_
+  refine runs_seq ?_
+  have I2 : Inv G s (((st.setW "best" G.n).charge 1).setW "i" 0 |>.charge 1) :=
+    (I.setW "best" G.n (by decide) (by decide)).charge 1 |>.setW "i" 0 (by decide) (by decide)
+      |>.charge 1
+  refine Runs.mono (minLoop_runs I2
+    (by simp [State.setW, State.charge]) (by simp [State.setW, State.charge])) ?_
+  intro m3 ⟨I3, hscan, _, _, _, hk3, hse3, hscc3, hc3, _⟩
+  have hcap3 : G.n + G.m + 2 ≤ m3.cap := I3.frame.hcap
+  have hn3 : m3.w "n" = G.n := I3.frame.hn
+  have hS2 : ((((st.setW "best" G.n).charge 1).setW "i" 0 |>.charge 1).cost : ℝ) =
+      (st.cost : ℝ) + 2 := by
+    simp [State.charge, State.setW]
+    ring
+  by_cases hA : m3.w "best" = G.n
+  · -- sentinel: no reach-1 anywhere → k := n and exit next test
+    have hno1 : ∀ v : Fin G.n, m3.wa "reach" v ≠ 1 := by
+      intro v hv
+      rcases hscan with ⟨-, hall⟩ | ⟨hbl, -⟩
+      · exact hall v hv
+      · exact absurd hA (by omega)
+    have htest : evalW m3 (.eq (.var "best") (.var "n")) = some 1 := by
+      rw [evalW_eq_of (evalW_var m3 "best") (evalW_var m3 "n") (by have := hcap3; omega),
+        hA, hn3]
+      simp
+    refine runs_ite_true (x := 1) htest one_ne_zero ?_
+    refine runs_wset (a := G.n) (by simp [evalW_var, State.charge, hn3]) ?_
+    have hchain : settledEdges G ((m3.charge 1).setW "k" G.n |>.charge 1) = settledEdges G st :=
+      hse3.trans rfl
+    have hchainc : settleCard G ((m3.charge 1).setW "k" G.n |>.charge 1) = settleCard G st :=
+      hscc3.trans rfl
+    have hm6c : (((m3.charge 1).setW "k" G.n |>.charge 1).cost : ℝ) = (m3.cost : ℝ) + 2 := by
+      simp [State.charge, State.setW]
+      ring
+    refine ⟨(I3.charge 1).setW "k" G.n (by decide) (by decide) |>.charge 1, ?_, ?_, ?_⟩
+    · show G.n - G.n < G.n - st.w "k"
+      omega
+    · exact Or.inl ⟨rfl, hno1, hchain, hchainc⟩
+    · rw [hm6c, hchain]
+      simp
+      linarith [hc3, hS2]
+  · -- best = u < n is the argmin: settle it and sweep its out-edges
+    rcases hscan with ⟨hb, -⟩ | ⟨hbl, hbr, hmin⟩
+    · exact absurd hb hA
+    have htest : evalW m3 (.eq (.var "best") (.var "n")) = some 0 := by
+      rw [evalW_eq_of (evalW_var m3 "best") (evalW_var m3 "n") (by have := hcap3; omega), hn3,
+        if_neg hA]
+    refine runs_ite_false htest ?_
+    have I4 : Inv G s (m3.charge 1) := I3.charge 1
+    have hcap4 : G.n + G.m + 2 ≤ (m3.charge 1).cap := I4.frame.hcap
+    refine runs_seq (Runs.mono (settleBody_runs (I := I4)
+      (u := ⟨m3.w "best", hbl⟩) hbr rfl (⟨m3.w "best", hbl⟩ : Fin G.n).isLt hmin) ?_)
+    intro m5 ⟨I5, hru2, _, _, _, hk5, _, _, hsc5, hse5, hc5, _⟩
+    have hmk : m5.w "k" = st.w "k" :=
+      hk5.trans ((rfl : (m3.charge 1).w "k" = m3.w "k").trans (hk3.trans rfl))
+    have hcap5 : G.n + G.m + 2 ≤ m5.cap := I5.frame.hcap
+    refine runs_wset (a := m5.w "k" + 1)
+      (evalW_add_of (evalW_var m5 "k") (evalW_lit_of (by have := hcap5; omega))
+        (by have := hcap5; omega)) ?_
+    have hule : (⟨m3.w "best", hbl⟩ : Fin G.n) < G.n := (⟨m3.w "best", hbl⟩ : Fin G.n).isLt
+    have hsem3 : settledEdges G (m3.charge 1) = settledEdges G st := hse3.trans rfl
+    have hscm3 : settleCard G (m3.charge 1) = settleCard G st := hscc3.trans rfl
+    have hsem6 : settledEdges G ((m5.setW "k" (m5.w "k" + 1)).charge 1) =
+        settledEdges G st + srcCnt G (⟨m3.w "best", hbl⟩ : Fin G.n) G.m :=
+      rfl |>.trans (hse5.trans (congrArg (· + srcCnt G (⟨m3.w "best", hbl⟩ : Fin G.n) G.m) hsem3))
+    have hscm6 : settleCard G ((m5.setW "k" (m5.w "k" + 1)).charge 1) = settleCard G st + 1 :=
+      rfl |>.trans (hsc5.trans (congrArg (· + 1) hscm3))
+    have hgoalt : ((m5.setW "k" (m5.w "k" + 1)).charge 1).w "k" = st.w "k" + 1 :=
+      (rfl : ((m5.setW "k" (m5.w "k" + 1)).charge 1).w "k" = m5.w "k" + 1).trans
+        (congrArg (· + 1) hmk)
+    refine ⟨(I5.setW "k" (m5.w "k" + 1) (by decide) (by decide)).charge 1, ?_, ?_, ?_⟩
+    · rw [hgoalt]
+      omega
+    · refine Or.inr ⟨⟨m3.w "best", hbl⟩, ?_, hscm6, hsem6⟩
+      show m5.w "k" + 1 = st.w "k" + 1
+      rw [hmk]
+    · have hm5c : (((m5.setW "k" (m5.w "k" + 1)).charge 1).cost : ℝ) = (m5.cost : ℝ) + 1 := by
+        simp [State.charge, State.setW]
+      have hm3c : ((m3.charge 1).cost : ℝ) = (m3.cost : ℝ) + 1 := by simp [State.charge]
+      simp only [State.charge] at hc5
+      have hcast : ((m3.cost + 1 : ℕ) : ℝ) = ((m3.cost : ℕ) : ℝ) + 1 := by push_cast; ring
+      rw [hm5c]
+      have hKrn : m3.wa "head" (m3.w "best" + 1) - m3.wa "head" (m3.w "best") =
+          srcCnt G (m3.w "best") G.m := by
+        have h1 := I3.csr.head_of_cnt (m3.w "best" + 1) (by omega)
+        have h2 := I3.csr.head_of_cnt (m3.w "best") (by omega)
+        have h3 := cnt_step_srcCnt G (m3.w "best")
+        omega
+      have hle : m3.wa "head" (m3.w "best") ≤ m3.wa "head" (m3.w "best" + 1) := by
+        have h1 := I3.csr.head_of_cnt (m3.w "best" + 1) (by omega)
+        have h2 := I3.csr.head_of_cnt (m3.w "best") (by omega)
+        have h3 := cnt_step_srcCnt G (m3.w "best")
+        omega
+      have hKrr : ((m3.wa "head" (m3.w "best" + 1) : ℕ) : ℝ) -
+          ((m3.wa "head" (m3.w "best") : ℕ) : ℝ) =
+          ((srcCnt G (m3.w "best") G.m : ℕ) : ℝ) := by
+        rw [← Nat.cast_sub hle]
+        exact_mod_cast hKrn
+      have hsr : ((srcCnt G (m3.w "best") G.m : ℕ) : ℝ) =
+          ((srcCnt G (⟨m3.w "best", hbl⟩ : Fin G.n) G.m : ℕ) : ℝ) := rfl
+      have hg : (settledEdges G ((m5.setW "k" (m5.w "k" + 1)).charge 1) : ℝ) =
+          (settledEdges G st : ℝ) + (srcCnt G (⟨m3.w "best", hbl⟩ : Fin G.n) G.m : ℝ) := by
+        exact_mod_cast hsem6
+      rw [hg]
+      linarith [hc5, hKrr, hsr, hm3c, hc3, hS2, hcast]
+
 theorem inv_of_main_step {G : Graph} {s : Fin G.n} {st st' : State ℝ≥0}
     (I : Inv G s st) (hk : st.w "k" < G.n)
     (hstep : Runs realOps mainBody st (fun r => r = st' ∧ (G.n - st'.w "k") < G.n - st.w "k")) :
     Inv G s st' := by
-  sorry
+  obtain ⟨f1, r1, hex1, hq1⟩ := mainBody_runs I hk
+  obtain ⟨f2, r2, hex2, hq2⟩ := hstep
+  have hsame : r1 = r2 := exec_det realOps hex1 hex2
+  rw [← hsame] at hq2
+  rw [hq2.1] at hq1
+  exact hq1.1
 
 /-- One settle step preserves `Inv` and settles its target exactly (the exchange). -/
 theorem inv_of_settle {G : Graph} {s : Fin G.n} {st st' : State ℝ≥0} {u : Fin G.n}
@@ -1930,28 +2081,225 @@ theorem solves_of_inv {G : Graph} {s : Fin G.n} {st : State ℝ≥0}
 
 /-! ## Assembly -/
 
-/-- The main loop: from any `Inv` state with `k = 0`, run to exit where no `reach = 1`
-vertex remains and `Solves` holds, at cost `≤ 26·(n²+m+1)`.  The loop invariant extends
-`Inv` with the settle-count (`k ≤ #{v | reach v = 2}` or done) and the exit fact, both
-carried through `mainInner` by `inv_of_settle` / `inv_of_relax_step` / `inv_of_main_step`. -/
+/-- The main loop: from any `Inv` state with `k = 0` and nothing settled yet, run to exit
+where no `reach = 1` vertex remains and `Solves` holds, at loop cost `≤ 24·(n²+m+1)`.
+Invariant `J` extends `Inv` with the settle-count link `k = settleCard` (or the done flag
+`k = n` with no `reach = 1` left) and the amortised cost line
+`cost ≤ base + (9n+14)·k + 9·settledEdges`; each settle step's sweep charge is absorbed by
+the `settledEdges` growth (its `srcCnt`), the sentinel step by the `n − k` slack. -/
 theorem runs_mainLoop {G : Graph} {s : Fin G.n} {st : State ℝ≥0}
-    (I : Inv G s st) (hk0 : st.w "k" = 0) :
+    (I : Inv G s st) (hk0 : st.w "k" = 0) (hsc0 : settleCard G st = 0) :
     Runs realOps mainLoop st
       (fun r => (∀ v : Fin G.n, r.wa "reach" v = 1 → False) ∧ r.Solves G s ∧
-        (r.cost : ℝ) ≤ 26 * (((G.n : ℝ) ^ 2 + G.m) + 1) + st.cost) := by
-  sorry
+        (r.cost : ℝ) ≤ 24 * (((G.n : ℝ) ^ 2 + G.m) + 1) + st.cost) := by
+  have hn : 0 < G.n := by have := s.isLt; omega
+  have hnn : ((G.n : ℝ) ^ 2) ≥ ((G.n : ℝ)) := by
+    have hn' : ((1 : ℝ) ≤ (G.n : ℝ)) := by exact_mod_cast hn
+    nlinarith [hn']
+  have hse0 : settledEdges G st = 0 := by
+    have hno2 : ∀ v : Fin G.n, ¬ (st.wa "reach" v = 2) := by
+      intro v h2
+      unfold settleCard at hsc0
+      have hmem : v ∈ Finset.univ.filter (fun w : Fin G.n => st.wa "reach" w = 2) := by
+        simpa using h2
+      have hpos : 0 < (Finset.univ.filter (fun w : Fin G.n => st.wa "reach" w = 2)).card :=
+        Finset.card_pos.mpr ⟨v, hmem⟩
+      omega
+    unfold settledEdges
+    apply Finset.sum_eq_zero
+    intro v _
+    have := hno2 v
+    simp [this]
+  have hinit : (Inv G s st ∧
+      (st.w "k" = settleCard G st ∨ (st.w "k" = G.n ∧ ∀ v : Fin G.n, st.wa "reach" v ≠ 1)) ∧
+      (st.cost : ℝ) ≤ (st.cost : ℝ) + (9 * (G.n : ℝ) + 14) * (st.w "k" : ℝ) +
+        9 * (settledEdges G st : ℝ)) := by
+    refine ⟨I, Or.inl (hk0.trans hsc0.symm), ?_⟩
+    rw [hk0, hse0]
+    simp
+  refine runs_while_var
+      (fun t => Inv G s t ∧
+        (t.w "k" = settleCard G t ∨ (t.w "k" = G.n ∧ ∀ v : Fin G.n, t.wa "reach" v ≠ 1)) ∧
+        (t.cost : ℝ) ≤ (st.cost : ℝ) + (9 * (G.n : ℝ) + 14) * (t.w "k" : ℝ) +
+          9 * (settledEdges G t : ℝ))
+      (fun t => G.n - t.w "k") _ ?_ st hinit
+  · intro t Jt
+    obtain ⟨It, hkd, hcost⟩ := Jt
+    have hcap : G.n + G.m + 2 ≤ t.cap := It.frame.hcap
+    have hnt : t.w "n" = G.n := It.frame.hn
+    have hscl : settleCard G t ≤ G.n := settleCard_le G t
+    by_cases hk : t.w "k" < G.n
+    · refine ⟨1, ?_, ?_, ?_⟩
+      · rw [evalW_lt_of (evalW_var t "k") (evalW_var t "n") (by have := hcap; omega), hnt,
+          if_pos hk]
+      · intro _
+        obtain ⟨fB, t', hexB, hI', hmeas, hdisj, hcost'⟩ :=
+          mainBody_runs (I := It.charge 1) (by show (t.charge 1).w "k" < G.n; exact hk)
+        refine ⟨fB, t', hexB, ⟨hI', ?_, ?_⟩, hmeas⟩
+        · rcases hdisj with ⟨hkn, hno1, -, -⟩ | ⟨u, hk1, hsc1, hse1⟩
+          · exact Or.inr ⟨hkn, hno1⟩
+          · refine Or.inl ?_
+            have hkl : t.w "k" = settleCard G t := by
+              rcases hkd with h | h
+              · exact h
+              · have := h.1; omega
+            show t'.w "k" = settleCard G t'
+            rw [hk1, hsc1, show (t.charge 1).w "k" = t.w "k" from rfl, hkl]
+            rfl
+        · rcases hdisj with ⟨hkn, -, hse', -⟩ | ⟨u, hk1, -, hse1⟩
+          · have hse'r : (settledEdges G t' : ℝ) = (settledEdges G t : ℝ) := by
+              exact_mod_cast hse'
+            have hchc : ((t.charge 1).cost : ℝ) = (t.cost : ℝ) + 1 := by simp [State.charge]
+            have hA0 : (0 : ℝ) ≤ 9 * (G.n : ℝ) + 14 := by linarith
+            have hnk : (t.w "k" : ℝ) + 1 ≤ (G.n : ℝ) := by exact_mod_cast hk
+            have hXle : (9 * (G.n : ℝ) + 14) * (t.w "k" : ℝ) + (9 * (G.n : ℝ) + 14) ≤
+                (9 * (G.n : ℝ) + 14) * (G.n : ℝ) := by
+              have hd : (9 * (G.n : ℝ) + 14) * ((t.w "k" : ℝ) + 1) =
+                  (9 * (G.n : ℝ) + 14) * (t.w "k" : ℝ) + (9 * (G.n : ℝ) + 14) := by ring
+              nlinarith [hnk, hA0]
+            have hknr : (t'.w "k" : ℝ) = (G.n : ℝ) := by exact_mod_cast hkn
+            have hsecf : (settledEdges G (t.charge 1) : ℝ) = (settledEdges G t : ℝ) := rfl
+            rw [hknr]
+            linarith [hcost, hcost', hXle, hse'r, hchc, hsecf]
+          · have hchc : ((t.charge 1).cost : ℝ) = (t.cost : ℝ) + 1 := by simp [State.charge]
+            have hsecf : (settledEdges G (t.charge 1) : ℝ) = (settledEdges G t : ℝ) := rfl
+            have hsecnat : settledEdges G (t.charge 1) = settledEdges G t := rfl
+            rw [hsecnat] at hse1
+            have hg : (settledEdges G t' : ℝ) = (settledEdges G t : ℝ) +
+                (srcCnt G u G.m : ℝ) := by exact_mod_cast hse1
+            have hk1r : (t'.w "k" : ℝ) = ((t.charge 1).w "k" : ℝ) + 1 := by
+              rw [hk1]; simp [State.charge]
+            have hdistr : (9 * (G.n : ℝ) + 14) * ((t.w "k" : ℝ) + 1) =
+                (9 * (G.n : ℝ) + 14) * (t.w "k" : ℝ) + (9 * (G.n : ℝ) + 14) := by ring
+            rw [hg, hk1r, show ((t.charge 1).w "k" : ℝ) = (t.w "k" : ℝ) from rfl]
+            linarith [hcost, hcost', hdistr, hchc, hsecf]
+      · intro h0
+        omega
+    · have hkn : t.w "k" = G.n := by
+        rcases hkd with h | h
+        · omega
+        · exact h.1
+      refine ⟨0, ?_, ?_, ?_⟩
+      · rw [evalW_lt_of (evalW_var t "k") (evalW_var t "n") (by have := hcap; omega), hnt,
+          hkn]
+        simp
+      · intro _
+        omega
+      · intro _
+        have hdone : ∀ v : Fin G.n, (t.charge 1).wa "reach" v ≠ 1 := by
+          intro v hv
+          have hkd2 := hkd
+          rcases hkd2 with h | h
+          · have hsctop : settleCard G t = G.n := by omega
+            have h2 := settleCard_eq_top hsctop v
+            have hle := It.reach_val v
+            have hvc : (t.charge 1).wa "reach" v = t.wa "reach" v := rfl
+            omega
+          · exact h.2 v hv
+        refine ⟨hdone, solves_of_inv (It.charge 1) hdone, ?_⟩
+        · have hchc : ((t.charge 1).cost : ℝ) = (t.cost : ℝ) + 1 := by simp [State.charge]
+          have hsem : (settledEdges G t : ℝ) ≤ (G.m : ℝ) := by
+            exact_mod_cast settledEdges_le G t
+          have hA0 : (0 : ℝ) ≤ 9 * (G.n : ℝ) + 14 := by linarith
+          have hknr : (t.w "k" : ℝ) = (G.n : ℝ) := by exact_mod_cast hkn
+          have hXe : (9 * (G.n : ℝ) + 14) * (t.w "k" : ℝ) =
+              9 * ((G.n : ℝ) ^ 2) + 14 * (G.n : ℝ) := by
+            rw [hknr]; ring
+          have hkey : 9 * ((G.n : ℝ) ^ 2) + 14 * (G.n : ℝ) + 9 * (G.m : ℝ) + 1 ≤
+              24 * (((G.n : ℝ) ^ 2 + (G.m : ℝ)) + 1) := by
+            have h1 : (1 : ℝ) ≤ (G.n : ℝ) := by exact_mod_cast hn
+            nlinarith [h1]
+          linarith [hcost, hchc, hsem, hXe, hkey]
 
 /-- On every graph and source the program terminates without getting stuck, outputs the exact
 distances, and costs at most `40 * (n² + m + 1)`.
 
-Assembly (the wiring is mechanical over the named lemmas above):
-`prog = allocAll; initReach; buildCSR; k := 0; mainLoop`.  Chain `runs_csr` (cost
-`≤ 10(n+m)+17`, `PreMain`) → `inv_of_preMain` → the `wset "k" 0` step (`Runs` rules) →
-`runs_mainLoop` (cost `≤ 26(n²+m+1)` from there) → `solves_of_inv` on the loop's exit
-postcondition.  Total `10(n+m)+18 + 26(n²+m+1) ≤ 40(n²+m+1)` for all `n ≥ 1, m ≥ 0`. -/
+Assembly: `prog = allocAll; initReach; buildCSR; k := 0; mainLoop`.  Chain `runs_csr`
+(cost `≤ 12(n+m)+17`, `PreMain`) → `inv_of_preMain` → the `wset "k" 0` step →
+`runs_mainLoop` (loop cost `≤ 24(n²+m+1)` from there) → the loop's exit postcondition is
+exactly `Solves` via `solves_of_inv`.  Total `12(n+m)+18 + 24(n²+m+1) ≤ 40(n²+m+1)` for
+all `n ≥ 1, m ≥ 0` (at `n = 1, m = 0`: `32 ≤ 40·2` slack `2`).  The exec-level splice
+inverts `runs_csr`'s bind into per-component facts and reassembles `prog`'s left-nested
+`seq` structure with `exec_mono`. -/
 theorem dijkstra_runs (G : Graph) (s : Fin G.n) :
     ∃ fuel r, dijkstraProgram.run fuel G s = some r ∧ r.Solves G s ∧
       (r.cost : ℝ) ≤ 40 * (((G.n : ℝ) ^ 2 + G.m) + 1) := by
-  sorry
+  have hn : 0 < G.n := by have := s.isLt; omega
+  obtain ⟨fP, S0, hexP, hqP⟩ := runs_csr G s
+  obtain ⟨f1, f2, sA, sB, hA, hB, hC⟩ :
+      ∃ f1 f2 sA sB, exec realOps f1 allocAll (initState dijkstraProgram G s) = some sA ∧
+        exec realOps f2 initReach sA = some sB ∧
+        exec realOps f2 buildCSR sB = some S0 := by
+    obtain ⟨g, hg⟩ : ∃ g, g + 1 = fP := ⟨fP - 1, by
+      cases fP with
+      | zero => exact absurd hexP (by simp [exec] at hexP)
+      | succ _ => omega⟩
+    rw [← hg, exec_seq] at hexP
+    obtain ⟨sA, hA, hBC⟩ := Option.bind_eq_some_iff.mp hexP
+    obtain ⟨g2, hg2⟩ : ∃ g2, g2 + 1 = g := by
+      cases g with
+      | zero => exact absurd hBC (by simp [exec] at hBC)
+      | succ n => exact ⟨n, rfl⟩
+    rw [← hg2, exec_seq] at hBC
+    obtain ⟨sB, hB, hC⟩ := Option.bind_eq_some_iff.mp hBC
+    exact ⟨_, _, sA, sB, hA, hB, hC⟩
+  have hI0 : Inv G s S0 := inv_of_preMain hqP.1
+  have hcap0 : G.n + G.m + 2 ≤ S0.cap := hI0.frame.hcap
+  have hsc0 : settleCard G ((S0.setW "k" 0).charge 1) = 0 := by
+    have hno2 : ∀ v : Fin G.n, ¬ ((S0.setW "k" 0).charge 1).wa "reach" v = 2 := by
+      intro v h2
+      have hvc : ((S0.setW "k" 0).charge 1).wa "reach" v = S0.wa "reach" v := rfl
+      have hle : ((S0.setW "k" 0).charge 1).wa "reach" v ≤ 1 := hqP.1.reach_low v
+      omega
+    unfold settleCard
+    refine Finset.card_eq_zero.mpr (Finset.subset_empty.mp ?_)
+    intro v hv
+    simp only [Finset.mem_filter, Finset.mem_univ, true_and] at hv
+    exact absurd hv (hno2 v)
+  have hcont : ∃ fR r, exec realOps fR (seq (wset "k" (.lit 0)) mainLoop) S0 = some r ∧
+      r.Solves G s ∧ (r.cost : ℝ) ≤ 40 * (((G.n : ℝ) ^ 2 + G.m) + 1) := by
+    have hrw : Runs realOps (seq (wset "k" (.lit 0)) mainLoop) S0
+        (fun r => r.Solves G s ∧ (r.cost : ℝ) ≤ 40 * (((G.n : ℝ) ^ 2 + G.m) + 1)) := by
+      refine runs_seq (runs_wset (a := 0)
+        (evalW_lit_of (by have := hcap0; omega)) ?_)
+      obtain ⟨fL, rL, hexL, hdone, hsol, hcostL⟩ :=
+        runs_mainLoop (I := hI0.setW "k" 0 (by decide) (by decide) |>.charge 1) rfl hsc0
+      refine ⟨fL, rL, hexL, hsol, ?_⟩
+      have hS1 : (((S0.setW "k" 0).charge 1).cost : ℝ) = (S0.cost : ℝ) + 1 := by
+        simp [State.charge, State.setW]
+      have hS0c : (S0.cost : ℝ) ≤ 12 * ((G.n : ℝ) + G.m) + 17 := hqP.2
+      have h1 : (1 : ℝ) ≤ (G.n : ℝ) := by exact_mod_cast hn
+      have hkey : 24 * (((G.n : ℝ) ^ 2 + (G.m : ℝ)) + 1) + (12 * ((G.n : ℝ) + (G.m : ℝ)) + 17)
+          + 1 ≤ 40 * (((G.n : ℝ) ^ 2 + (G.m : ℝ)) + 1) := by
+        have hnn : ((G.n : ℝ) ^ 2) ≥ ((G.n : ℝ)) := by nlinarith [h1]
+        nlinarith [hnn]
+      linarith [hcostL, hS1, hS0c, hkey]
+    obtain ⟨fR, r, hexR, hQ⟩ := hrw
+    exact ⟨fR, r, hexR, hQ.1, hQ.2⟩
+  obtain ⟨fR, r, hexR, hSolves, hcost⟩ := hcont
+  refine ⟨(max (max (max f1 f2) f2) fR) + 4, r, ?_, hSolves, hcost⟩
+  show exec realOps ((max (max (max f1 f2) f2) fR) + 4) prog
+      (initState dijkstraProgram G s) = some r
+  have hA' : exec realOps ((max (max (max f1 f2) f2) fR) + 3) allocAll
+      (initState dijkstraProgram G s) = some sA := exec_mono realOps hA (by omega)
+  have hB' : exec realOps ((max (max (max f1 f2) f2) fR) + 2) initReach sA = some sB :=
+    exec_mono realOps hB (by omega)
+  have hC' : exec realOps ((max (max (max f1 f2) f2) fR) + 1) buildCSR sB = some S0 :=
+    exec_mono realOps hC (by omega)
+  have hR' : exec realOps ((max (max (max f1 f2) f2) fR) + 1)
+      (seq (wset "k" (.lit 0)) mainLoop) S0 = some r := exec_mono realOps hexR (by omega)
+  show exec realOps ((max (max (max f1 f2) f2) fR) + 3 + 1)
+      (seq allocAll (seq initReach (seq buildCSR (seq (wset "k" (.lit 0)) mainLoop))))
+      (initState dijkstraProgram G s) = some r
+  rw [show ((max (max (max f1 f2) f2) fR) + 4) =
+      (((max (max (max f1 f2) f2) fR) + 3) + 1) from by omega,
+    exec_seq, hA', Option.bind_some,
+    show (((max (max (max f1 f2) f2) fR) + 3)) =
+      (((max (max (max f1 f2) f2) fR) + 2) + 1) from by omega,
+    exec_seq, hB', Option.bind_some,
+    show (((max (max (max f1 f2) f2) fR) + 2)) =
+      (((max (max (max f1 f2) f2) fR) + 1) + 1) from by omega,
+    exec_seq, hC', Option.bind_some]
+  exact hR'
 
 end BigOSpeedrun.DirectedSSSP.Dijkstra
