@@ -173,7 +173,7 @@ theorem runs_allocAll (G : Graph) (s : Fin G.n) :
     Runs realOps allocAll (initState dijkstraProgram G s) (fun S1 =>
       Frontier.RAM.BF.Frame G S1 ∧ S1.wlen "head" = G.n + 1 ∧ S1.wlen "pos" = G.n ∧
         S1.wlen "idx" = G.m ∧ (∀ j, S1.wa "head" j = 0) ∧ (∀ j, S1.wa "pos" j = 0) ∧
-        (∀ j, S1.wa "idx" j = 0) ∧ (∀ j, S1.va "dist" j = 0) ∧ S1.w "s" = (s : ℕ) ∧
+        (∀ j, S1.wa "idx" j = 0) ∧ (∀ j, S1.va "dist" j = 0) ∧ S1.w "s" = (s : ℕ) ∧ (∀ j, S1.wa "reach" j = 0) ∧
         S1.cost = 4 * G.n + G.m + 6) := by
   have hn : 0 < G.n := by have := s.isLt; omega
   have h0 := Frontier.RAM.BF.inputFrame_initState dijkstraProgram s
@@ -197,7 +197,7 @@ theorem runs_allocAll (G : Graph) (s : Fin G.n) :
     with hS5
   have h5cap : G.n + G.m + 2 ≤ S5.cap := by
     simp only [hS5, State.allocW, State.allocV, State.charge]; omega
-  refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+  refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
   · refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
     · simp [hS5, State.allocW, State.allocV, State.charge, h0.hn]
     · simp [hS5, State.allocW, State.allocV, State.charge, h0.hm]
@@ -218,6 +218,7 @@ theorem runs_allocAll (G : Graph) (s : Fin G.n) :
   · intro j; simp [hS5, State.allocW, State.allocV, State.charge]
   · intro j; simp [hS5, State.allocW, State.allocV, State.charge, realOps]
   · simp [hS5, State.allocW, State.allocV, State.charge, initState]
+  · intro j; simp [hS5, State.allocW, State.allocV, State.charge]
   · simp [hS5, State.allocW, State.allocV, State.charge, initState]
     omega
 
@@ -314,6 +315,28 @@ theorem AllocFacts.storeW {G : Graph} {s : Fin G.n} {st : State ℝ≥0} (h : Al
 Exact cost `4m + 3`: `wstore reach s 1` (1), `wset e 0` (1), `countLoop` (`m` iterations of
 `1` test + `3` statements, then `1` exit test). -/
 
+
+/-- The facts `allocAll` establishes, in the form `initReach` needs them (before `reach` is
+seeded, so the array is still all-zero). -/
+structure AllocPre (G : Graph) (s : Fin G.n) (st : State ℝ≥0) : Prop where
+  frame : Frontier.RAM.BF.Frame G st
+  hheadL : st.wlen "head" = G.n + 1
+  hposL : st.wlen "pos" = G.n
+  hidxL : st.wlen "idx" = G.m
+  hdist0 : ∀ j, st.va "dist" j = 0
+  hws : st.w "s" = (s : ℕ)
+  hhead0 : ∀ j, st.wa "head" j = 0
+  hreachZ : ∀ j, st.wa "reach" j = 0
+
+/-- `initReach`'s first store seeds `reach[s]`, turning `AllocPre` into `AllocFacts`. -/
+theorem AllocPre.toAllocAfterReach {G : Graph} {s : Fin G.n} {st : State ℝ≥0}
+    (h : AllocPre G s st) : AllocFacts G s (st.storeW "reach" (s : ℕ) 1) := by
+  obtain ⟨f1, f2, f3, f4, f5, f6, f7, f8⟩ := h
+  refine ⟨Frontier.RAM.BF.Frame.storeW_reach f1 (s : ℕ) 1, f2, f3, f4, f5, ?_, ?_, f6⟩
+  · simp [State.storeW]
+  · intro v _ hvs
+    simp [State.storeW, hvs, f8 v]
+
 /-- Count-loop invariant: `head v` holds the number of edges `< k` whose source is `v`. -/
 structure CountInv (G : Graph) (s : Fin G.n) (S : State ℝ≥0) (k : ℕ) (t : State ℝ≥0) : Prop where
   alloc : AllocFacts G s t
@@ -397,8 +420,7 @@ theorem countBody_runs {G : Graph} {s : Fin G.n} {S : State ℝ≥0} {k : ℕ} (
       simp [hT3, hT2, hT1, State.setW, State.storeW, State.charge]
     rw [hc, hcost]; omega
 
-theorem runs_initReach (G : Graph) (s : Fin G.n) (S : State ℝ≥0) (A : AllocFacts G s S)
-    (hhead0 : ∀ v, v ≤ G.n → S.wa "head" v = 0) :
+theorem runs_initReach (G : Graph) (s : Fin G.n) (S : State ℝ≥0) (A : AllocPre G s S) :
     Runs realOps initReach S (fun S2 => AllocFacts G s S2 ∧
       (∀ v, v ≤ G.n → S2.wa "head" v = srcCnt G v G.m) ∧
       S2.w "e" = G.m ∧ S2.cost = S.cost + 4 * G.m + 3) := by
@@ -413,11 +435,11 @@ theorem runs_initReach (G : Graph) (s : Fin G.n) (S : State ℝ≥0) (A : AllocF
     (evalW_lit_of (by have := hcap1; omega)) ?_)
   set T : State ℝ≥0 := ((S.storeW "reach" (s : ℕ) 1).charge 1).setW "e" 0 |>.charge 1 with hT
   have hTalloc : AllocFacts G s T :=
-    ((A.storeReachS.charge 1).setW "e" (by decide) (by decide) (by decide) 0).charge 1
+    ((A.toAllocAfterReach.charge 1).setW "e" (by decide) (by decide) (by decide) 0).charge 1
   have hThead : ∀ v, v ≤ G.n → T.wa "head" v = srcCnt G v 0 := by
     intro v hv
     rw [srcCnt_zero]
-    simp [hT, State.setW, State.storeW, State.charge, hhead0 v hv]
+    simp [hT, State.setW, State.storeW, State.charge, A.hhead0 v]
   have hTe : T.w "e" = 0 := by simp [hT, State.setW, State.charge]
   have hTcost : T.cost = S.cost + 2 + 4 * 0 := by
     simp [hT, State.setW, State.charge] <;> rfl
@@ -455,7 +477,7 @@ structure PrefixInv (G : Graph) (s : Fin G.n) (S : State ℝ≥0) (k : ℕ) (t :
   wk : t.w "k" = cnt G k
   done : ∀ v, v < k → t.wa "head" v = cnt G v
   todo : ∀ v, k ≤ v → v ≤ G.n → t.wa "head" v = srcCnt G v G.m
-  cost : t.cost = S.cost + 2 + 5 * k
+  cost : t.cost = S.cost + 5 * k
 
 theorem prefixBody_runs {G : Graph} {s : Fin G.n} {S : State ℝ≥0} {k : ℕ} (hkn : k < G.n)
     {t : State ℝ≥0} (It : PrefixInv G s S k t) :
@@ -544,54 +566,33 @@ theorem prefixBody_runs {G : Graph} {s : Fin G.n} {S : State ℝ≥0} {k : ℕ} 
       simp [hT4, hT3, hT2, hT1, State.setW, State.storeW, State.charge]
     rw [hc, hcost]; omega
 
-/-- The prefix section: `i := 0`, `k := 0`, then the loop. -/
-theorem runs_prefixSection (G : Graph) (s : Fin G.n) (S : State ℝ≥0) (A : AllocFacts G s S)
-    (htodo0 : ∀ v, v ≤ G.n → S.wa "head" v = srcCnt G v G.m) :
-    Runs realOps (seq (wset "i" (.lit 0)) (seq (wset "k" (.lit 0)) prefixLoop)) S
-      (fun S2 => AllocFacts G s S2 ∧ (∀ v, v < G.n → S2.wa "head" v = cnt G v) ∧
-        S2.wa "head" G.n = srcCnt G G.n G.m ∧ S2.w "k" = G.m ∧
-        S2.cost = S.cost + 5 * G.n + 3) := by
-  have hcap : G.n + G.m + 2 ≤ S.cap := A.frame.hcap
-  refine runs_seq (runs_wset (x := "i") (e := .lit 0) (a := 0)
-    (evalW_lit_of (by have := hcap; omega)) ?_)
-  have hcap1 : G.n + G.m + 2 ≤ (S.setW "i" 0 |>.charge 1).cap := hcap
-  refine runs_seq (runs_wset (x := "k") (e := .lit 0) (a := 0)
-    (evalW_lit_of (by have := hcap1; omega)) ?_)
-  set T : State ℝ≥0 := ((S.setW "i" 0).charge 1 |>.setW "k" 0).charge 1 with hT
-  have hTalloc : AllocFacts G s T :=
-    ((A.setW "i" (by decide) (by decide) (by decide) 0).charge 1 |>.setW "k"
-      (by decide) (by decide) (by decide) 0).charge 1
-  have hTi : T.w "i" = 0 := by simp [hT, State.setW, State.charge]
-  have hTk : T.w "k" = cnt G 0 := by
-    rw [cnt_zero]; simp [hT, State.setW, State.charge]
-  have hTcost : T.cost = S.cost + 2 + 5 * 0 := by
-    simp [hT, State.setW, State.charge] <;> rfl
-  have hTtodo : ∀ v, 0 ≤ v → v ≤ G.n → T.wa "head" v = srcCnt G v G.m := by
-    intro v _ hvn
-    simp [hT, State.setW, State.charge, htodo0 v hvn]
-  have hloop : Runs realOps prefixLoop T (fun S2 => AllocFacts G s S2 ∧
+/-- The prefix loop from an arbitrary start state with `i = 0`, `k = 0`. -/
+theorem runs_prefixLoop (G : Graph) (s : Fin G.n) (S : State ℝ≥0) (A : AllocFacts G s S)
+    (htodo0 : ∀ v, v ≤ G.n → S.wa "head" v = srcCnt G v G.m)
+    (hi0 : S.w "i" = 0) (hk0 : S.w "k" = 0) :
+    Runs realOps prefixLoop S (fun S2 => AllocFacts G s S2 ∧
       (∀ v, v < G.n → S2.wa "head" v = cnt G v) ∧
       S2.wa "head" G.n = srcCnt G G.n G.m ∧ S2.w "k" = G.m ∧
-      S2.cost = S.cost + 2 + 5 * G.n + 1) := by
-    refine runs_while (fun k t => PrefixInv G s S k t) G.n _ ?_ ?_ T
-      ⟨hTalloc, hTi, hTk, by intro v hv; omega, hTtodo, hTcost⟩
-    · intro k hkn t It
-      have hcap' : G.n + G.m + 2 ≤ t.cap := It.alloc.frame.hcap
-      refine ⟨1, ?_, one_ne_zero, prefixBody_runs hkn It⟩
-      rw [evalW_lt_of (evalW_var t "i") (evalW_var t "n") (by have := hcap'; omega),
+      S2.cost = S.cost + 5 * G.n + 1) := by
+  have hTk : S.w "k" = cnt G 0 := by rw [hk0, cnt_zero]
+  have hTcost : S.cost = S.cost + 5 * 0 := by omega
+  refine runs_while (fun k t => PrefixInv G s S k t) G.n _ ?_ ?_ S
+    ⟨A, hi0, hTk, (by intro v hv; omega), (fun v _ hv => htodo0 v hv), hTcost⟩
+  · intro k hkn t It
+    have hcap' : G.n + G.m + 2 ≤ t.cap := It.alloc.frame.hcap
+    refine ⟨1, ?_, one_ne_zero, prefixBody_runs hkn It⟩
+    rw [evalW_lt_of (evalW_var t "i") (evalW_var t "n") (by have := hcap'; omega),
+      It.wi, It.alloc.frame.hn]
+    simp [hkn]
+  · intro t It
+    have hcap' : G.n + G.m + 2 ≤ t.cap := It.alloc.frame.hcap
+    refine ⟨?_, It.alloc.charge 1, (fun v hv => It.done v hv), ?_, It.wk.trans (cnt_top G), ?_⟩
+    · rw [evalW_lt_of (evalW_var t "i") (evalW_var t "n") (by have := hcap'; omega),
         It.wi, It.alloc.frame.hn]
-      simp [hkn]
-    · intro t It
-      have hcap' : G.n + G.m + 2 ≤ t.cap := It.alloc.frame.hcap
-      refine ⟨?_, It.alloc.charge 1, (fun v hv => It.done v hv), ?_, It.wk.trans (cnt_top G), ?_⟩
-      · rw [evalW_lt_of (evalW_var t "i") (evalW_var t "n") (by have := hcap'; omega),
-          It.wi, It.alloc.frame.hn]
-        simp
-      · exact It.todo G.n le_rfl le_rfl
-      · show (t.charge 1).cost = S.cost + 2 + 5 * G.n + 1
-        simp [State.charge, It.cost]
-  obtain ⟨fL, rL, hexL, hAl, hHl, hHn, hKl, hCl⟩ := hloop
-  exact ⟨fL, rL, hexL, hAl, hHl, hHn, hKl, by rw [hCl]; omega⟩
+      simp
+    · exact It.todo G.n le_rfl le_rfl
+    · have hc1 : (t.charge 1).cost = t.cost + 1 := by simp [State.charge]
+      rw [hc1, It.cost]
 
 /-- Copy invariant: `pos` agrees with `head` below the cursor. -/
 structure CopyInv (G : Graph) (s : Fin G.n) (S : State ℝ≥0) (k : ℕ) (t : State ℝ≥0) : Prop where
@@ -599,7 +600,7 @@ structure CopyInv (G : Graph) (s : Fin G.n) (S : State ℝ≥0) (k : ℕ) (t : S
   wi : t.w "i" = k
   pos : ∀ v, v < k → t.wa "pos" v = t.wa "head" v
   head : ∀ v, v ≤ G.n → t.wa "head" v = cnt G v
-  cost : t.cost = S.cost + 1 + 3 * k
+  cost : t.cost = S.cost + 3 * k
 
 theorem copyBody_runs {G : Graph} {s : Fin G.n} {S : State ℝ≥0} {k : ℕ} (hkn : k < G.n)
     {t : State ℝ≥0} (It : CopyInv G s S k t) :
@@ -652,51 +653,31 @@ theorem copyBody_runs {G : Graph} {s : Fin G.n} {S : State ℝ≥0} {k : ℕ} (h
       simp [hT2, hT1, State.setW, State.storeW, State.charge]
     rw [hc, hcost]; omega
 
-theorem runs_copySection (G : Graph) (s : Fin G.n) (S : State ℝ≥0) (A : AllocFacts G s S)
-    (hhead : ∀ v, v ≤ G.n → S.wa "head" v = cnt G v) :
-    Runs realOps (seq (wset "i" (.lit 0)) copyLoop) S
-      (fun S2 => AllocFacts G s S2 ∧ (∀ v, v < G.n → S2.wa "pos" v = S2.wa "head" v) ∧
-        (∀ v, v ≤ G.n → S2.wa "head" v = cnt G v) ∧
-        S2.cost = S.cost + 3 * G.n + 2) := by
-  have hcap : G.n + G.m + 2 ≤ S.cap := A.frame.hcap
-  refine runs_seq (runs_wset (x := "i") (e := .lit 0) (a := 0)
-    (evalW_lit_of (by have := hcap; omega)) ?_)
-  set T : State ℝ≥0 := (S.setW "i" 0).charge 1 with hT
-  have hTalloc : AllocFacts G s T := (A.setW "i" (by decide) (by decide) (by decide) 0).charge 1
-  have hTi : T.w "i" = 0 := by simp [hT, State.setW, State.charge]
-  have hTcost : T.cost = S.cost + 1 + 3 * 0 := by
-    simp [hT, State.setW, State.charge] <;> rfl
-  have hloop : Runs realOps copyLoop T (fun S2 => AllocFacts G s S2 ∧
+/-- The copy loop from an arbitrary start state with `i = 0`. -/
+theorem runs_copyLoop (G : Graph) (s : Fin G.n) (S : State ℝ≥0) (A : AllocFacts G s S)
+    (hhead : ∀ v, v ≤ G.n → S.wa "head" v = cnt G v) (hi0 : S.w "i" = 0) :
+    Runs realOps copyLoop S (fun S2 => AllocFacts G s S2 ∧
       (∀ v, v < G.n → S2.wa "pos" v = S2.wa "head" v) ∧
       (∀ v, v ≤ G.n → S2.wa "head" v = cnt G v) ∧
-      S2.cost = S.cost + 1 + 3 * G.n + 1) := by
-    refine runs_while (fun k t => CopyInv G s S k t) G.n _ ?_ ?_ T
-      ⟨hTalloc, hTi, by intro v hv; omega, hhead, hTcost⟩
-    · intro k hkn t It
-      have hcap' : G.n + G.m + 2 ≤ t.cap := It.alloc.frame.hcap
-      refine ⟨1, ?_, one_ne_zero, copyBody_runs hkn It⟩
-      rw [evalW_lt_of (evalW_var t "i") (evalW_var t "n") (by have := hcap'; omega),
+      S2.cost = S.cost + 3 * G.n + 1) := by
+  have hTcost : S.cost = S.cost + 3 * 0 := by omega
+  refine runs_while (fun k t => CopyInv G s S k t) G.n _ ?_ ?_ S
+    ⟨A, hi0, (by intro v hv; omega), hhead, hTcost⟩
+  · intro k hkn t It
+    have hcap' : G.n + G.m + 2 ≤ t.cap := It.alloc.frame.hcap
+    refine ⟨1, ?_, one_ne_zero, copyBody_runs hkn It⟩
+    rw [evalW_lt_of (evalW_var t "i") (evalW_var t "n") (by have := hcap'; omega),
+      It.wi, It.alloc.frame.hn]
+    simp [hkn]
+  · intro t It
+    have hcap' : G.n + G.m + 2 ≤ t.cap := It.alloc.frame.hcap
+    refine ⟨?_, It.alloc.charge 1, (fun v hv => It.pos v hv), It.head, ?_⟩
+    · rw [evalW_lt_of (evalW_var t "i") (evalW_var t "n") (by have := hcap'; omega),
         It.wi, It.alloc.frame.hn]
-      simp [hkn]
-    · intro t It
-      have hcap' : G.n + G.m + 2 ≤ t.cap := It.alloc.frame.hcap
-      refine ⟨?_, It.alloc.charge 1, (fun v hv => It.pos v hv), It.head, ?_⟩
-      · rw [evalW_lt_of (evalW_var t "i") (evalW_var t "n") (by have := hcap'; omega),
-          It.wi, It.alloc.frame.hn]
-        simp
-      · show (t.charge 1).cost = S.cost + 1 + 3 * G.n + 1
-        simp [State.charge, It.cost]
-  obtain ⟨fL, rL, hexL, hAl, hPl, hHl, hCl⟩ := hloop
-  exact ⟨fL, rL, hexL, hAl, hPl, hHl, by rw [hCl]; omega⟩
+      simp
+    · have hc1 : (t.charge 1).cost = t.cost + 1 := by simp [State.charge]
+      rw [hc1, It.cost]
 
-
-/-! ## Phase C2 — `placeLoop`
-
-Cursor invariant: `pos v = head v + |{e < k | src e = v}|` and every edge below the cursor
-sits at `idx (head (src e) + rank e)`.  Cost `6m + 1` (`5` statements + `1` test per
-iteration, plus the exit test; with the `wset e 0` prologue, `6m + 2`). -/
-
-/-- Rank of an edge below the cursor is below its source class' *cursor* count. -/
 theorem rank_lt_cursor {G : Graph} {e : Fin G.m} {k : ℕ} (hek : (e : ℕ) < k) :
     rank G e < srcCnt G (G.src e : ℕ) k := by
   rw [rank_eq]
@@ -764,7 +745,7 @@ structure PlaceInv (G : Graph) (s : Fin G.n) (S : State ℝ≥0) (k : ℕ) (t : 
   posform : ∀ v, v < G.n → t.wa "pos" v = t.wa "head" v + srcCnt G v k
   place : ∀ e : Fin G.m, (e : ℕ) < k →
     t.wa "idx" (t.wa "head" (G.src e) + rank G e) = (e : ℕ)
-  cost : t.cost = S.cost + 1 + 6 * k
+  cost : t.cost = S.cost + 6 * k
 
 theorem placeBody_runs {G : Graph} {s : Fin G.n} {S : State ℝ≥0} {k : ℕ} (hkm : k < G.m)
     {t : State ℝ≥0} (It : PlaceInv G s S k t) :
@@ -957,57 +938,243 @@ theorem placeBody_runs {G : Graph} {s : Fin G.n} {S : State ℝ≥0} {k : ℕ} (
       simp [hT5, hT4, hT3, hT2, hT1, State.storeW, State.setW, State.charge]
     rw [hc, hcost]; omega
 
-/-- The placement section: `e := 0` then the loop. -/
-theorem runs_placeSection (G : Graph) (s : Fin G.n) (S : State ℝ≥0) (A : AllocFacts G s S)
+/-- The placement loop from an arbitrary start state with `e = 0`. -/
+theorem runs_placeLoop (G : Graph) (s : Fin G.n) (S : State ℝ≥0) (A : AllocFacts G s S)
     (hheadcnt : ∀ v, v ≤ G.n → S.wa "head" v = cnt G v)
-    (hpos0 : ∀ v, v < G.n → S.wa "pos" v = S.wa "head" v) :
-    Runs realOps (seq (wset "e" (.lit 0)) placeLoop) S
-      (fun S2 => AllocFacts G s S2 ∧ (∀ v, v ≤ G.n → S2.wa "head" v = cnt G v) ∧
-        (∀ e : Fin G.m, S2.wa "idx" (S2.wa "head" (G.src e) + rank G e) = (e : ℕ)) ∧
-        S2.cost = S.cost + 6 * G.m + 2) := by
-  have hcap : G.n + G.m + 2 ≤ S.cap := A.frame.hcap
-  refine runs_seq (runs_wset (x := "e") (e := .lit 0) (a := 0)
-    (evalW_lit_of (by have := hcap; omega)) ?_)
-  set T : State ℝ≥0 := (S.setW "e" 0).charge 1 with hT
-  have hTalloc : AllocFacts G s T := (A.setW "e" (by decide) (by decide) (by decide) 0).charge 1
-  have hTe : T.w "e" = 0 := by simp [hT, State.setW, State.charge]
-  have hTcost : T.cost = S.cost + 1 + 6 * 0 := by
-    simp [hT, State.setW, State.charge] <;> rfl
-  have hThead : ∀ v, v ≤ G.n → T.wa "head" v = cnt G v := by
-    intro v hv; rw [hT]; simp only [State.setW, State.charge]; exact hheadcnt v hv
-  have hTpos : ∀ v, v < G.n → T.wa "pos" v = T.wa "head" v + srcCnt G v 0 := by
-    intro v hv
-    rw [srcCnt_zero]
-    rw [hT]; simp only [State.setW, State.charge]
-    rw [hpos0 v hv]
-    omega
-  have hloop : Runs realOps placeLoop T (fun S2 => AllocFacts G s S2 ∧
+    (hpos0 : ∀ v, v < G.n → S.wa "pos" v = S.wa "head" v) (he0 : S.w "e" = 0) :
+    Runs realOps placeLoop S (fun S2 => AllocFacts G s S2 ∧
       (∀ v, v ≤ G.n → S2.wa "head" v = cnt G v) ∧
       (∀ e : Fin G.m, S2.wa "idx" (S2.wa "head" (G.src e) + rank G e) = (e : ℕ)) ∧
-      S2.cost = S.cost + 1 + 6 * G.m + 1) := by
-    refine runs_while (fun k t => PlaceInv G s S k t) G.m _ ?_ ?_ T
-      ⟨hTalloc, hTe, hThead, hTpos, (by intro e he; omega), hTcost⟩
-    · intro k hkm t It
-      have hcap' : G.n + G.m + 2 ≤ t.cap := It.alloc.frame.hcap
-      refine ⟨1, ?_, one_ne_zero, placeBody_runs hkm It⟩
-      rw [evalW_lt_of (evalW_var t "e") (evalW_var t "m") (by have := hcap'; omega),
+      S2.cost = S.cost + 6 * G.m + 1) := by
+  have hTpos : ∀ v, v < G.n → S.wa "pos" v = S.wa "head" v + srcCnt G v 0 := by
+    intro v hv
+    rw [srcCnt_zero, hpos0 v hv]
+    omega
+  have hTcost : S.cost = S.cost + 6 * 0 := by omega
+  refine runs_while (fun k t => PlaceInv G s S k t) G.m _ ?_ ?_ S
+    ⟨A, he0, hheadcnt, hTpos, (by intro e he; omega), hTcost⟩
+  · intro k hkm t It
+    have hcap' : G.n + G.m + 2 ≤ t.cap := It.alloc.frame.hcap
+    refine ⟨1, ?_, one_ne_zero, placeBody_runs hkm It⟩
+    rw [evalW_lt_of (evalW_var t "e") (evalW_var t "m") (by have := hcap'; omega),
+      It.we, It.alloc.frame.hm]
+    simp [hkm]
+  · intro t It
+    have hcap' : G.n + G.m + 2 ≤ t.cap := It.alloc.frame.hcap
+    refine ⟨?_, It.alloc.charge 1, It.headcnt, (fun e => It.place e (by have := It.we; omega)),
+      ?_⟩
+    · rw [evalW_lt_of (evalW_var t "e") (evalW_var t "m") (by have := hcap'; omega),
         It.we, It.alloc.frame.hm]
-      simp [hkm]
-    · intro t It
-      have hcap' : G.n + G.m + 2 ≤ t.cap := It.alloc.frame.hcap
-      refine ⟨?_, It.alloc.charge 1, It.headcnt, (fun e => It.place e (by have := It.we; omega)),
-        ?_⟩
-      · rw [evalW_lt_of (evalW_var t "e") (evalW_var t "m") (by have := hcap'; omega),
-          It.we, It.alloc.frame.hm]
-        simp
-      · show (t.charge 1).cost = S.cost + 1 + 6 * G.m + 1
-        simp [State.charge, It.cost]
-  obtain ⟨fL, rL, hexL, hAl, hHl, hPl, hCl⟩ := hloop
-  exact ⟨fL, rL, hexL, hAl, hHl, hPl, by rw [hCl]; omega⟩
+      simp
+    · have hc1 : (t.charge 1).cost = t.cost + 1 := by simp [State.charge]
+      rw [hc1, It.cost]
+
+
+/-! ## Phase D — the rank bijection and `CSRPart`
+
+`rank` maps the edges of one source class bijectively onto `[0, srcCnt v m)`.  Injectivity is
+`rank_lt_of_lt`; surjectivity is a cardinality argument.  This is what turns the placement
+invariant into `csr_seg`/`csr_cover`. -/
+
+theorem rank_bij {G : Graph} {v r : ℕ} (hr : r < srcCnt G v G.m) :
+    ∃ e : Fin G.m, (G.src e : ℕ) = v ∧ rank G e = r := by
+  classical
+  set A : Finset (Fin G.m) := Finset.univ.filter (fun e' => (G.src e' : ℕ) = v) with hA
+  have hAcard : A.card = srcCnt G v G.m := by
+    rw [hA, srcCnt_full]
+  have hinj : ∀ a ∈ A, ∀ b ∈ A, rank G a = rank G b → a = b := by
+    intro a ha b hb hab
+    by_contra hne
+    have hsa : (G.src a : ℕ) = v := (Finset.mem_filter.mp ha).2
+    have hsb : (G.src b : ℕ) = v := (Finset.mem_filter.mp hb).2
+    have hsrc : G.src a = G.src b := Fin.ext (by omega)
+    rcases lt_trichotomy (a : ℕ) (b : ℕ) with hlt | heq | hgt
+    · have := rank_lt_of_lt hsrc hlt
+      omega
+    · exact hne (Fin.ext heq)
+    · have := rank_lt_of_lt hsrc.symm hgt
+      omega
+  have himg : (A.image (rank G)).card = srcCnt G v G.m := by
+    rw [Finset.card_image_of_injOn hinj, hAcard]
+  have hsub : A.image (rank G) ⊆ Finset.range (srcCnt G v G.m) := by
+    intro x hx
+    obtain ⟨e, he, rfl⟩ := Finset.mem_image.mp hx
+    have hse : (G.src e : ℕ) = v := (Finset.mem_filter.mp he).2
+    refine Finset.mem_range.mpr ?_
+    have h := rank_lt G e
+    rw [hse] at h
+    exact h
+  have himgEq : A.image (rank G) = Finset.range (srcCnt G v G.m) := by
+    refine Finset.eq_of_subset_of_card_le hsub ?_
+    rw [himg, Finset.card_range]
+  have hmem : r ∈ A.image (rank G) := by
+    rw [himgEq]
+    exact Finset.mem_range.mpr hr
+  obtain ⟨e, he, her⟩ := Finset.mem_image.mp hmem
+  exact ⟨e, (Finset.mem_filter.mp he).2, her⟩
+
+/-- `CSRPart` from the phase-C facts. -/
+theorem csrPart_of {G : Graph} {st : State ℝ≥0}
+    (hheadL : st.wlen "head" = G.n + 1) (hposL : st.wlen "pos" = G.n)
+    (hidxL : st.wlen "idx" = G.m)
+    (hheadcnt : ∀ v, v ≤ G.n → st.wa "head" v = cnt G v)
+    (hplace : ∀ e : Fin G.m, st.wa "idx" (st.wa "head" (G.src e) + rank G e) = (e : ℕ)) :
+    CSRPart G st := by
+  refine ⟨hheadL, hposL, hidxL, ?_, ?_, hheadcnt, ?_, ?_⟩
+  · intro v hv
+    rw [hheadcnt v hv]
+    exact cnt_le G v
+  · intro i j hij hjn
+    rw [hheadcnt i (by omega), hheadcnt j hjn]
+    exact cnt_mono (G := G) hij
+  · intro v q hl hq
+    have hnext : st.wa "head" ((v : ℕ) + 1) = cnt G (v : ℕ) + srcCnt G (v : ℕ) G.m := by
+      rw [hheadcnt ((v : ℕ) + 1) (by have := v.isLt; omega), cnt_step (G := G) (v : ℕ)]
+    have hcntv : st.wa "head" (v : ℕ) = cnt G (v : ℕ) := hheadcnt (v : ℕ) (by omega)
+    have hr : q - st.wa "head" (v : ℕ) < srcCnt G (v : ℕ) G.m := by
+      rw [hnext] at hq
+      omega
+    obtain ⟨e, hse, hre⟩ := rank_bij (G := G) hr
+    have hqv : q = st.wa "head" (G.src e) + rank G e := by
+      have h1 : st.wa "head" (G.src e) = st.wa "head" (v : ℕ) := by rw [hse]
+      rw [h1, hre]
+      exact (Nat.add_sub_of_le hl).symm
+    have hidxe : st.wa "idx" q = (e : ℕ) := by
+      rw [hqv]
+      exact hplace e
+    have hqm : q < G.m := by
+      have hsum : cnt G (v : ℕ) + srcCnt G (v : ℕ) G.m ≤ G.m := by
+        have hstep := cnt_step (G := G) (v : ℕ)
+        have hle := cnt_le G ((v : ℕ) + 1)
+        omega
+      rw [hnext] at hq
+      omega
+    exact ⟨hqm,
+      by have := e.isLt; rw [hidxe]; exact e.isLt,
+      by
+        intro hq'
+        have hfin : (⟨st.wa "idx" q, hq'⟩ : Fin G.m) = e := Fin.ext hidxe
+        rw [hfin]
+        exact Fin.ext hse⟩
+  · intro e
+    have hcnt : st.wa "head" (G.src e) = cnt G (G.src e : ℕ) :=
+      hheadcnt (G.src e) (by have := (G.src e).isLt; omega)
+    have hnext : st.wa "head" ((G.src e : ℕ) + 1) =
+        cnt G (G.src e : ℕ) + srcCnt G (G.src e : ℕ) G.m := by
+      rw [hheadcnt ((G.src e : ℕ) + 1) (by have := (G.src e).isLt; omega),
+        cnt_step (G := G) (G.src e : ℕ)]
+    refine ⟨st.wa "head" (G.src e) + rank G e, Nat.le_add_right _ _, ?_, hplace e⟩
+    rw [hnext, hcnt]
+    have hlt := rank_lt G e
+    omega
 
 theorem runs_csr (G : Graph) (s : Fin G.n) :
     Runs realOps (seq allocAll (seq initReach buildCSR)) (initState dijkstraProgram G s)
       (fun st => PreMain G s st ∧ (st.cost : ℝ) ≤ 12 * ((G.n : ℝ) + G.m) + 17) := by
-  sorry
+  refine runs_seq (a := allocAll) (b := seq initReach buildCSR) (Runs.mono (runs_allocAll G s) ?_)
+  rintro S1 ⟨⟨f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11⟩, hnl, hpl, hil, hz1, hz2, hz3,
+    hz4, hwsA, hzr, hcA⟩
+  have hPre : AllocPre G s S1 :=
+    ⟨⟨f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11⟩, hnl, hpl, hil, hz4, hwsA, hz1, hzr⟩
+  -- Phase B: `initReach`
+  refine runs_seq (a := initReach) (b := buildCSR) (Runs.mono (runs_initReach G s S1 hPre) ?_)
+  rintro S2 ⟨A2, hsrc2, hwe2, hc2⟩
+  have hcap2 : G.n + G.m + 2 ≤ S2.cap := A2.frame.hcap
+  -- `i := 0`
+  refine runs_seq (a := wset "i" (.lit 0)) (b := seq (wset "k" (.lit 0))
+    (seq prefixLoop (seq (wstore "head" (.var "n") (.var "k"))
+      (seq (wset "i" (.lit 0)) (seq copyLoop (seq (wset "e" (.lit 0)) placeLoop))))))
+    (Runs.mono (runs_wset (x := "i") (e := .lit 0) (a := 0) (s := S2)
+      (Q := fun t => AllocFacts G s t ∧ (∀ v, v ≤ G.n → t.wa "head" v = srcCnt G v G.m) ∧
+        t.w "i" = 0 ∧ t.cost = S2.cost + 1)
+      (evalW_lit_of (by have := hcap2; omega)) ?_) ?_)
+  · refine ⟨A2.setW "i" (by decide) (by decide) (by decide) 0 |>.charge 1, ?_, ?_, ?_⟩
+    · intro v hv; simp [State.setW, State.charge, hsrc2 v hv]
+    · simp [State.setW, State.charge]
+    · simp [State.setW, State.charge]
+  rintro T1 ⟨A1, hsrc1, hi1, hc1⟩
+  -- `k := 0`
+  refine runs_seq (a := wset "k" (.lit 0)) (b := seq prefixLoop (seq (wstore "head" (.var "n")
+    (.var "k")) (seq (wset "i" (.lit 0)) (seq copyLoop (seq (wset "e" (.lit 0)) placeLoop)))))
+    (Runs.mono (runs_wset (x := "k") (e := .lit 0) (a := 0) (s := T1)
+      (Q := fun t => AllocFacts G s t ∧ (∀ v, v ≤ G.n → t.wa "head" v = srcCnt G v G.m) ∧
+        t.w "i" = 0 ∧ t.w "k" = 0 ∧ t.cost = T1.cost + 1)
+      (evalW_lit_of (by have := A1.frame.hcap; omega)) ?_) ?_)
+  · refine ⟨A1.setW "k" (by decide) (by decide) (by decide) 0 |>.charge 1, ?_, ?_, ?_, ?_⟩
+    · intro v hv; simp [State.setW, State.charge, hsrc1 v hv]
+    · simp [State.setW, State.charge, hi1]
+    · simp [State.setW, State.charge]
+    · simp [State.setW, State.charge]
+  rintro T2 ⟨A3, hsrc3, hi3, hk3, hc3⟩
+  -- the prefix loop
+  refine runs_seq (a := prefixLoop) (b := seq (wstore "head" (.var "n") (.var "k"))
+    (seq (wset "i" (.lit 0)) (seq copyLoop (seq (wset "e" (.lit 0)) placeLoop))))
+    (Runs.mono (runs_prefixLoop G s T2 A3 hsrc3 hi3 hk3) ?_)
+  rintro T3 ⟨A4, hdone4, htop4, hk4, hc4⟩
+  -- `head[n] := k`
+  refine runs_seq (a := wstore "head" (.var "n") (.var "k")) (b := seq (wset "i" (.lit 0))
+    (seq copyLoop (seq (wset "e" (.lit 0)) placeLoop)))
+    (Runs.mono (runs_wstore (arr := "head") (i := .var "n") (e := .var "k") (j := G.n) (a := G.m)
+      (s := T3) (Q := fun t => AllocFacts G s t ∧ (∀ v, v ≤ G.n → t.wa "head" v = cnt G v) ∧
+        t.cost = T3.cost + 1)
+      (show evalW T3 (.var "n") = some G.n by rw [evalW_var, A4.frame.hn])
+      (show evalW T3 (.var "k") = some G.m by rw [evalW_var, hk4])
+      (show G.n < T3.wlen "head" by rw [A4.hheadL]; omega) ?_) ?_)
+  · refine ⟨(A4.storeW "head" (by decide) (by decide) (by decide) G.n G.m).charge 1, ?_, ?_⟩
+    · intro v hv
+      by_cases hvN : v = G.n
+      · subst hvN
+        simp [State.storeW, State.charge, cnt_top]
+      · have hlt : v < G.n := by omega
+        simp [State.storeW, State.charge, hvN, hdone4 v hlt]
+    · simp [State.storeW, State.charge]
+  rintro T4 ⟨A5, hhead5, hc5⟩
+  have hcap5 : G.n + G.m + 2 ≤ T4.cap := A5.frame.hcap
+  -- `i := 0`
+  refine runs_seq (a := wset "i" (.lit 0)) (b := seq copyLoop (seq (wset "e" (.lit 0)) placeLoop))
+    (Runs.mono (runs_wset (x := "i") (e := .lit 0) (a := 0) (s := T4)
+      (Q := fun t => AllocFacts G s t ∧ (∀ v, v ≤ G.n → t.wa "head" v = cnt G v) ∧
+        t.w "i" = 0 ∧ t.cost = T4.cost + 1)
+      (evalW_lit_of (by have := hcap5; omega)) ?_) ?_)
+  · refine ⟨A5.setW "i" (by decide) (by decide) (by decide) 0 |>.charge 1, ?_, ?_, ?_⟩
+    · intro v hv; simp [State.setW, State.charge, hhead5 v hv]
+    · simp [State.setW, State.charge]
+    · simp [State.setW, State.charge]
+  rintro T5 ⟨A6, hhead6, hi6, hc6⟩
+  -- the copy loop
+  refine runs_seq (a := copyLoop) (b := seq (wset "e" (.lit 0)) placeLoop)
+    (Runs.mono (runs_copyLoop G s T5 A6 hhead6 hi6) ?_)
+  rintro T6 ⟨A7, hpos7, hhead7, hc7⟩
+  have hcap7 : G.n + G.m + 2 ≤ T6.cap := A7.frame.hcap
+  -- `e := 0`
+  refine runs_seq (a := wset "e" (.lit 0)) (b := placeLoop)
+    (Runs.mono (runs_wset (x := "e") (e := .lit 0) (a := 0) (s := T6)
+      (Q := fun t => AllocFacts G s t ∧ (∀ v, v ≤ G.n → t.wa "head" v = cnt G v) ∧
+        (∀ v, v < G.n → t.wa "pos" v = t.wa "head" v) ∧ t.w "e" = 0 ∧
+        t.cost = T6.cost + 1)
+      (evalW_lit_of (by have := hcap7; omega)) ?_) ?_)
+  · refine ⟨A7.setW "e" (by decide) (by decide) (by decide) 0 |>.charge 1, ?_, ?_, ?_, ?_⟩
+    · intro v hv; simp [State.setW, State.charge, hhead7 v hv]
+    · intro v hv; simp [State.setW, State.charge, hpos7 v hv]
+    · simp [State.setW, State.charge]
+    · simp [State.setW, State.charge]
+  rintro T7 ⟨A8, hhead8, hpos8, he8, hc8⟩
+  -- the placement loop
+  refine Runs.mono (runs_placeLoop G s T7 A8 hhead8 hpos8 he8) ?_
+  rintro T8 ⟨A9, hhead9, hplace9, hc9⟩
+  -- `PreMain` and the cost bound
+  refine ⟨⟨A9.frame, csrPart_of A9.hheadL A9.hposL A9.hidxL hhead9 hplace9, ?_, A9.hreachS, ?_,
+    (fun v => A9.hdist0 v)⟩, ?_⟩
+  · intro v
+    by_cases hvs : v = s
+    · subst hvs; rw [A9.hreachS]
+    · rw [A9.hreach0 v v.isLt (by intro h; exact hvs (Fin.ext h))]; omega
+  · intro v hvs
+    exact A9.hreach0 v v.isLt (by intro h; exact hvs (Fin.ext h))
+  · have hcost : T8.cost = 12 * G.n + 11 * G.m + 17 := by omega
+    have hcast : (T8.cost : ℝ) = 12 * (G.n : ℝ) + 11 * (G.m : ℝ) + 17 := by
+      exact_mod_cast hcost
+    have hm0 : (0 : ℝ) ≤ (G.m : ℝ) := Nat.cast_nonneg _
+    linarith
 
 end BigOSpeedrun.DirectedSSSP.Dijkstra
