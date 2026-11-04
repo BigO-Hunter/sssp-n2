@@ -398,7 +398,7 @@ theorem relaxBody_runs {G : Graph} {s : Fin G.n} {st : State ℝ≥0} {u : ℕ}
       st'.w "j" = st.w "j" + 1 ∧ st'.w "u" = st.w "u" ∧ st'.w "jend" = st.w "jend" ∧
       st'.w "k" = st.w "k" ∧ st'.w "best" = st.w "best" ∧ st'.w "i" = st.w "i" ∧
       settledEdges G st' = settledEdges G st ∧ settleCard G st' = settleCard G st ∧
-      (st'.cost : ℝ) ≤ st.cost + 8) := by
+      (st'.cost : ℝ) ≤ st.cost + 8 ∧ st'.wa "reach" u = 2) := by
   /- BRANCH FILL (spine above compiles; ~120 lines of mechanical tactics remain).
   FINAL WORKING PATTERNS (each verified in this file's history):
   * register-eval at a charged state: `by simp [evalW_var, State.charge, h2v]`
@@ -433,20 +433,21 @@ theorem relaxBody_runs {G : Graph} {s : Fin G.n} {st : State ℝ≥0} {u : ℕ}
       t.w "jend" = st.w "jend" → t.w "k" = st.w "k" → t.w "best" = st.w "best" →
       t.w "i" = st.w "i" → settledEdges G t = settledEdges G st →
       settleCard G t = settleCard G st → t.cost ≤ st.cost + 7 →
+      t.wa "reach" u = 2 →
       Runs realOps (wset "j" (.add (.var "j") (.lit 1))) t
         (fun st' => Inv G s st' ∧
           st'.w "j" = st.w "j" + 1 ∧ st'.w "u" = st.w "u" ∧ st'.w "jend" = st.w "jend" ∧
           st'.w "k" = st.w "k" ∧ st'.w "best" = st.w "best" ∧ st'.w "i" = st.w "i" ∧
           settledEdges G st' = settledEdges G st ∧ settleCard G st' = settleCard G st ∧
-          (st'.cost : ℝ) ≤ st.cost + 8) := by
-    intro t It h3j h3u h3jend h3k h3best h3i h3se h3sc h3cost
+          (st'.cost : ℝ) ≤ st.cost + 8 ∧ st'.wa "reach" u = 2) := by
+    intro t It h3j h3u h3jend h3k h3best h3i h3se h3sc h3cost h3reach
     have htcap : G.n + G.m + 2 ≤ t.cap := It.frame.hcap
     have htj : t.w "j" < G.m := by rw [h3j]; exact hjm
     refine runs_wset (a := t.w "j" + 1)
       (evalW_add_of (evalW_var t "j") (evalW_lit_of (by have := htcap; omega))
         (by have := htcap; omega)) ?_
     refine ⟨(It.setW "j" (t.w "j" + 1) (by decide) (by decide)).charge 1,
-      ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+      ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
     · simp [State.setW, State.charge, h3j]
     · simp [State.setW, State.charge, h3u]
     · simp [State.setW, State.charge, h3jend]
@@ -457,6 +458,7 @@ theorem relaxBody_runs {G : Graph} {s : Fin G.n} {st : State ℝ≥0} {u : ℕ}
     · show settleCard G t = settleCard G st; exact h3sc
     · simp [State.setW, State.charge]
       exact_mod_cast (by omega : t.cost + 1 ≤ st.cost + 8)
+    · exact h3reach
   -- e := idx[j]
   refine runs_seq (runs_wset (a := (eFin : ℕ))
     (by rw [evalW_load_of (evalW_var st "j") (by rw [I.csr.hidxL]; exact hjm)]) ?_)
@@ -491,7 +493,7 @@ theorem relaxBody_runs {G : Graph} {s : Fin G.n} {st : State ℝ≥0} {u : ℕ}
   by_cases h2v2 : st.wa "reach" (G.dst eFin) = 2
   · -- settled target: skip
     refine runs_ite_true (x := 1) (by rw [htest2, h2v2]; rfl) one_ne_zero (runs_skip ?_)
-    refine finish _ ((I2.charge 1).charge 1) rfl rfl rfl rfl rfl rfl rfl rfl ?_
+    refine finish _ ((I2.charge 1).charge 1) rfl rfl rfl rfl rfl rfl rfl rfl ?_ hu
     simp [State.charge, h2cost]
   · refine runs_ite_false (by rw [htest2, if_neg h2v2]) ?_
     have h21cap : G.n + G.m + 2 ≤ (st2.charge 1).cap := h2cap
@@ -524,8 +526,14 @@ theorem relaxBody_runs {G : Graph} {s : Fin G.n} {st : State ℝ≥0} {u : ℕ}
         (by rw [evalW_var] <;> exact congrArg some h2v)
         (evalW_lit_of (by have := h5cap; omega))
         (by rw [h5reachL]; exact (G.dst eFin).isLt) ?_
+      have hvu : (u : ℕ) ≠ (G.dst eFin : ℕ) := by
+        intro h
+        rw [← h] at h0v
+        omega
+      have hreachu : S5.wa "reach" u = 2 := hu
       refine finish _ (inv_relax_unreached (I2.charge 1 |>.charge 1)
         (u := ⟨u, huu⟩) (e := eFin) hu hsrc_e h0v) rfl rfl rfl rfl rfl rfl ?_ ?_ ?_
+        (by simp [State.setW, State.charge, State.storeW, hvu, hreachu])
       · show settledEdges G (S5.storeW "reach" (G.dst eFin) 1) = settledEdges G st
         rw [settledEdges_storeW1 (st := S5) (v := G.dst eFin) (show S5.wa "reach" (G.dst eFin) = 0 from h0v)]
         rfl
@@ -564,7 +572,7 @@ theorem relaxBody_runs {G : Graph} {s : Fin G.n} {st : State ℝ≥0} {u : ℕ}
         refine finish _
           (((I2.charge 1).charge 1 |>.setW "b" bit (by decide) (by decide))
             |>.charge 1 |>.charge 1 |>.charge 1)
-          rfl rfl rfl rfl rfl rfl rfl rfl ?_
+          rfl rfl rfl rfl rfl rfl rfl rfl ?_ hu
         simp only [hS5, hS4, State.charge, State.setW, h2cost]
         omega
       · have hbit0 : bit = 0 := by simp [bit, realOps, hle]
@@ -586,7 +594,7 @@ theorem relaxBody_runs {G : Graph} {s : Fin G.n} {st : State ℝ≥0} {u : ℕ}
           (I2.charge 1 |>.charge 1 |>.setW "b" bit (by decide) (by decide)
             |>.charge 1 |>.charge 1)
           (u := ⟨u, huu⟩) (e := eFin) hu hsrc_e h1v (lt_of_not_ge hle))
-          rfl rfl rfl rfl rfl rfl rfl rfl ?_
+          rfl rfl rfl rfl rfl rfl rfl rfl ?_ hu
         simp only [hS5, hS4, State.charge, State.storeV, State.setW, h2cost]
         omega
 
