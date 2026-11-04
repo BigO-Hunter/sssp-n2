@@ -169,6 +169,57 @@ True per-phase counts against the cost model (`1` per statement and test, `alloc
 `n = 1, m = 0` (true cost `29`): the original `12(n+m)+12` and the session-2 "correction"
 `10(n+m)+17` (its claimed true count `10n+10m+17` dropped the `n+1` in `walloc "head"`,
 one loop exit test, and one prologue `wset`). -/
+theorem runs_allocAll (G : Graph) (s : Fin G.n) :
+    Runs realOps allocAll (initState dijkstraProgram G s) (fun S1 =>
+      Frontier.RAM.BF.Frame G S1 ∧ S1.wlen "head" = G.n + 1 ∧ S1.wlen "pos" = G.n ∧
+        S1.wlen "idx" = G.m ∧ (∀ j, S1.wa "head" j = 0) ∧ (∀ j, S1.wa "pos" j = 0) ∧
+        (∀ j, S1.wa "idx" j = 0) ∧ (∀ j, S1.va "dist" j = 0) ∧
+        S1.cost = 4 * G.n + G.m + 6) := by
+  have hn : 0 < G.n := by have := s.isLt; omega
+  have h0 := Frontier.RAM.BF.inputFrame_initState dijkstraProgram s
+  have h0n := h0.hn
+  have h0m := h0.hm
+  have h0cap := h0.hcap
+  refine runs_seq (runs_walloc (k := G.n + 1)
+    (by rw [evalW_add_of (by rw [evalW_var, h0n]) (evalW_lit_of (by omega))
+      (by omega)]) ?_)
+  refine runs_seq (runs_walloc (k := G.n)
+    (by simp [evalW_var, State.allocW, State.charge, h0n]) ?_)
+  refine runs_seq (runs_walloc (k := G.m)
+    (by simp [evalW_var, State.allocW, State.charge, h0n, h0m]) ?_)
+  refine runs_seq (runs_valloc (k := G.n)
+    (by simp [evalW_var, State.allocW, State.charge, h0n, h0m]) ?_)
+  refine runs_walloc (k := G.n)
+    (by simp [evalW_var, State.allocW, State.allocV, State.charge, h0n, h0m]) ?_
+  set S5 := ((((((initState dijkstraProgram G s).allocW "head" (G.n + 1)).charge (G.n + 1 +
+      1)).allocW "pos" G.n).charge (G.n + 1)).allocW "idx" G.m).charge (G.m + 1) |>.allocV
+      "dist" G.n realOps.zero |>.charge (G.n + 1) |>.allocW "reach" G.n |>.charge (G.n + 1)
+    with hS5
+  have h5cap : G.n + G.m + 2 ≤ S5.cap := by
+    simp only [hS5, State.allocW, State.allocV, State.charge]; omega
+  refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+  · refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+    · simp [hS5, State.allocW, State.allocV, State.charge, h0.hn]
+    · simp [hS5, State.allocW, State.allocV, State.charge, h0.hm]
+    · simp only [hS5, State.allocW, State.allocV, State.charge]; omega
+    · intro j h; simp [hS5, State.allocW, State.allocV, State.charge, h0.hsrc j h]
+    · intro j h; simp [hS5, State.allocW, State.allocV, State.charge, h0.hdst j h]
+    · intro j h; simp [hS5, State.allocW, State.allocV, State.charge, h0.hw j h]
+    · simp [hS5, State.allocW, State.allocV, State.charge, h0.hsrcL]
+    · simp [hS5, State.allocW, State.allocV, State.charge, h0.hdstL]
+    · simp [hS5, State.allocW, State.allocV, State.charge, h0.hwL]
+    · simp [hS5, State.allocW, State.allocV, State.charge]
+    · simp [hS5, State.allocW, State.allocV, State.charge]
+  · simp [hS5, State.allocW, State.allocV, State.charge]
+  · simp [hS5, State.allocW, State.allocV, State.charge]
+  · simp [hS5, State.allocW, State.allocV, State.charge]
+  · intro j; simp [hS5, State.allocW, State.allocV, State.charge]
+  · intro j; simp [hS5, State.allocW, State.allocV, State.charge]
+  · intro j; simp [hS5, State.allocW, State.allocV, State.charge]
+  · intro j; simp [hS5, State.allocW, State.allocV, State.charge, realOps]
+  · simp [hS5, State.allocW, State.allocV, State.charge, initState]
+    omega
+
 theorem runs_csr (G : Graph) (s : Fin G.n) :
     Runs realOps (seq allocAll (seq initReach buildCSR)) (initState dijkstraProgram G s)
       (fun st => PreMain G s st ∧ (st.cost : ℝ) ≤ 12 * ((G.n : ℝ) + G.m) + 17) := by
