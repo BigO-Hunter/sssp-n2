@@ -22,12 +22,7 @@ jobs:
         uses: leanprover/lean-action@24581d74d674803a25a81b10b059c5c0cdd344c6 # v1
         with:
           lake-package-directory: .
-          build: "false"
+          build: "true"
           test: "false"
           lint: "false"
           use-mathlib-cache: "true"
-      # The lakefile also declares Frontier / VerifierChallenge / VerifierAudit
-      # libs, but this tree carries only the Submission sources; build the
-      # proof target explicitly rather than the empty legacy libs.
-      - name: Build the Submission proof
-        run: lake build Submission

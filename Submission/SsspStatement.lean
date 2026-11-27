@@ -7,10 +7,10 @@ https://bigospeedrun.com/directed-sssp.
 
 The computation model (`Frontier.Graph`, `Frontier.RAM.Program`, `Program.run`,
 `State.Solves`, `State.cost`: a deep-embedded word RAM with comparison-addition
-reals) is not in this repository. The verifier stages it from
-https://github.com/bigospeedrun/c-hd-proof (a fork of spicylemonade/c-hd-proof),
-directory formal/lean, at the commit pinned in profiles/direct.json
-(solution_dependencies). This file adds the race statement only and assumes no
+reals) is vendored in this repository under `Frontier/`, byte-for-byte from
+https://github.com/BigO-Hunter/c-hd-proof (mirror of bigospeedrun/c-hd-proof,
+a fork of spicylemonade/c-hd-proof), directory formal/lean, at commit
+98c53accb47a505482a1781597ae14bf67e81cec. This file adds the race statement only and assumes no
 estimate or proof of any bound.
 
 A row says: "on graphs with at most D(n) edges, the time is O(T(n))", with

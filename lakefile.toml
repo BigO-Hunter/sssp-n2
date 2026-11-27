@@ -1,5 +1,6 @@
 name = "Verifier"
 version = "0.1.0"
+defaultTargets = ["Submission", "Frontier"]
 [leanOptions]
 autoImplicit = false
 [[require]]
@@ -14,9 +15,3 @@ name = "Submission"
 name = "Frontier"
 [lean_lib.leanOptions]
 autoImplicit = true
-
-[[lean_lib]]
-name = "VerifierChallenge"
-
-[[lean_lib]]
-name = "VerifierAudit"
